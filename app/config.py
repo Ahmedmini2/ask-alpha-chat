@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     # Telegram bot
     telegram_bot_token: str = ""
 
+    # Comma-separated list of allowed CORS origins. Default "*" for dev; tighten in prod via env.
+    cors_origins: str = "*"
+
     # App
     log_level: str = "INFO"
     app_env: str = "development"

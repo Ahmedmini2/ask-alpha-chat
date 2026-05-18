@@ -1,7 +1,13 @@
 .venv/
 .env
+.env.*
 __pycache__/
 *.pyc
 .pytest_cache/
 .DS_Store
 *.egg-info/
+*.log
+.vscode/
+.idea/
+.claude/
+nohup.out
