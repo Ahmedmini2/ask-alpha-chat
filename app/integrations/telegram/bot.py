@@ -87,6 +87,18 @@ def _format_cards(cards: list[dict]) -> str:
             items = c.get("items", [])
             if items:
                 lines.append(f"\n📄 _Found {len(items)} brochure excerpts._")
+        elif kind == "no_match_suggestions":
+            items = c.get("items", [])
+            if items:
+                q = c.get("query") or "that"
+                lines.append(f"\nWe don't have *{q}* in our system yet. Closest matches we do carry:")
+                for p in items:
+                    price = ""
+                    if p.get("min_price") and p.get("max_price"):
+                        price = f" — {p.get('currency') or ''} {int(p['min_price']):,}–{int(p['max_price']):,}"
+                    loc = p.get("city") or p.get("region") or ""
+                    dev = p.get("developer") or ""
+                    lines.append(f"  • *{p.get('name')}* ({dev}, {loc}){price}")
         elif kind == "video_job":
             lines.append(
                 f"\n🎬 *Video job started* — id `{c.get('video_id')}` "

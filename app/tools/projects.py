@@ -1,5 +1,5 @@
 from typing import Any
-from sqlalchemy import select, or_
+from sqlalchemy import select, or_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import Project, ProjectUnit
 from app.tools.registry import Tool, registry
@@ -64,6 +64,9 @@ async def search_projects_handler(db: AsyncSession, args: dict, ctx: dict) -> di
     query = args.get("query")
     location = args.get("location")
     sale_status = args.get("sale_status")
+    min_price = args.get("min_price")
+    max_price = args.get("max_price")
+    sort = args.get("sort")
     limit = min(int(args.get("limit", 5)), 5)
     offset = max(int(args.get("offset", 0)), 0)
 
@@ -87,16 +90,54 @@ async def search_projects_handler(db: AsyncSession, args: dict, ctx: dict) -> di
     if sale_status:
         stmt = stmt.where(Project.sale_status.ilike(f"%{sale_status}%"))
 
+    # Price filtering. When the user asks for a price band, drop rows whose
+    # min_price is NULL or 0 — that's missing data, not free property, and
+    # would otherwise pass an "under X" filter spuriously.
+    price_filter_applied = min_price is not None or max_price is not None
+    if price_filter_applied:
+        stmt = stmt.where(Project.min_price.is_not(None)).where(Project.min_price > 0)
+    if min_price is not None:
+        stmt = stmt.where(Project.min_price >= float(min_price))
+    if max_price is not None:
+        stmt = stmt.where(Project.min_price <= float(max_price))
+
+    if sort == "price_desc" or (price_filter_applied and sort is None):
+        stmt = stmt.order_by(Project.min_price.desc(), Project.id)
+    elif sort == "price_asc":
+        stmt = stmt.order_by(Project.min_price.asc(), Project.id)
+    else:
+        stmt = stmt.order_by(Project.id)
+
     # Fetch limit+1 to detect has_more without a separate COUNT.
-    stmt = stmt.order_by(Project.id).offset(offset).limit(limit + 1)
+    stmt = stmt.offset(offset).limit(limit + 1)
     rows = (await db.execute(stmt)).scalars().all()
     has_more = len(rows) > limit
     projects = rows[:limit]
+
+    # If the strict search returned nothing and the user gave us a name, run a fuzzy
+    # trigram search (pg_trgm extension is enabled in the schema) so the LLM has
+    # alternatives to surface — keeps Ask Alpha from saying "maybe it goes by another
+    # name" or hallucinating projects.
+    suggestions: list[dict] = []
+    if not projects and query:
+        sim = func.similarity(Project.name, query)
+        sug_stmt = (
+            select(Project)
+            .where(Project.is_published == True)  # noqa: E712
+            .where(sim > 0.15)
+            .order_by(sim.desc())
+            .limit(3)
+        )
+        sug_rows = (await db.execute(sug_stmt)).scalars().all()
+        suggestions = [_serialize_project_summary(p) for p in sug_rows]
+
     return {
         "count": len(projects),
         "has_more": has_more,
         "next_offset": (offset + limit) if has_more else None,
         "projects": [_serialize_project_summary(p) for p in projects],
+        "suggestions": suggestions,
+        "query": query,
     }
 
 
@@ -137,6 +178,35 @@ registry.register(Tool(
             "sale_status": {
                 "type": "string",
                 "description": "Optional sale status filter, e.g. 'On sale', 'Sold out'",
+            },
+            "min_price": {
+                "type": "number",
+                "description": (
+                    "Optional lower bound on the project's starting price (Project.min_price), "
+                    "in the project currency (AED for UAE projects). Use this whenever the user "
+                    "specifies a budget floor, e.g. 'above 2M AED'. Projects with NULL or zero "
+                    "min_price are excluded when this or max_price is set, since those are missing "
+                    "data, not real prices."
+                ),
+            },
+            "max_price": {
+                "type": "number",
+                "description": (
+                    "Optional upper bound on the project's starting price (Project.min_price), "
+                    "in the project currency (AED for UAE projects). Use this whenever the user "
+                    "specifies a budget ceiling, e.g. 'under 1M dirhams' → max_price=1000000. "
+                    "Projects with NULL or zero min_price are excluded when this or min_price is "
+                    "set, since those are missing data, not real prices."
+                ),
+            },
+            "sort": {
+                "type": "string",
+                "enum": ["price_desc", "price_asc"],
+                "description": (
+                    "Optional sort order on starting price. 'price_desc' = highest to lowest, "
+                    "'price_asc' = lowest to highest. When a price filter is set and sort is "
+                    "omitted, results default to highest-to-lowest."
+                ),
             },
             "limit": {
                 "type": "integer",
