@@ -311,12 +311,18 @@ def _build_cards(tool_calls: list[dict]) -> list[dict]:
 
 async def _run_tool_loop(db: AsyncSession, messages: list[dict], ctx: dict) -> tuple[str, list[dict]]:
     tool_config = registry.to_bedrock_config()
+    # The system prompt and tool schemas are large and identical on every iteration;
+    # a cache point lets supported models (Claude on Bedrock) reuse them cheaply.
+    system_blocks: list[dict] = [{"text": ASK_ALPHA_SYSTEM_PROMPT}]
+    if settings.enable_prompt_caching:
+        system_blocks.append({"cachePoint": {"type": "default"}})
+        tool_config = {**tool_config, "tools": [*tool_config["tools"], {"cachePoint": {"type": "default"}}]}
     captured: list[dict] = []
 
     for _ in range(MAX_TOOL_ITERATIONS):
         response = bedrock.converse(
             modelId=settings.bedrock_model_id,
-            system=[{"text": ASK_ALPHA_SYSTEM_PROMPT}],
+            system=system_blocks,
             messages=messages,
             toolConfig=tool_config,
             inferenceConfig={"maxTokens": 1500, "temperature": 0.2},
