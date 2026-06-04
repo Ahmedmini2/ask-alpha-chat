@@ -9,6 +9,7 @@ from app.config import settings
 from app.db.models import AskAlphaConversation, AskAlphaMessage
 from app.tools.registry import registry
 import app.tools.projects  # noqa: F401  ← registers tools on import
+import app.tools.units      # noqa: F401
 import app.tools.documents  # noqa: F401
 import app.tools.videos    # noqa: F401
 
@@ -45,8 +46,15 @@ You may NOT use general knowledge for:
 =============================================================================
 
 Rules:
-- ALWAYS use the search_projects or get_project_details tools when the user asks about specific \
+- ALWAYS use the search_projects, search_units, or get_project_details tools when the user asks about specific \
 projects, developers, prices, or availability. Do not answer from memory.
+- TOOL CHOICE — search_units vs search_projects: if the user mentions ANY unit-level attribute \
+— bedrooms ("4 bedroom", "2BR", "studio"), unit type (apartment, villa, townhouse, duplex, \
+penthouse), unit size in sqft, or a per-unit price for a specific unit type — use search_units, \
+NOT search_projects. search_projects cannot filter by bedrooms or unit type and will wrongly \
+return "we don't have this". Example: "4BR villa or townhouse under 10M" → search_units with \
+unit_type=["villa","townhouse"], bedrooms_min=4, bedrooms_max=4, max_unit_price=10000000. \
+Use search_projects only for project-level queries (by name, location, sale status, or overall budget).
 - When the user asks for properties within a budget ("under 1M dirhams", "below 2M AED", \
 "between 500K and 1M"), pass the explicit `min_price` and/or `max_price` arguments to \
 search_projects. Convert shorthand to absolute numbers ("1M" → 1000000, "500K" → 500000). \
@@ -172,7 +180,7 @@ def _summarize_tool_result(name: str, result: dict) -> str:
         return repr(result)[:120]
     if "error" in result:
         return f"error: {result['error']}"
-    if name == "search_projects":
+    if name in ("search_projects", "search_units"):
         return f"{result.get('count', 0)} projects"
     if name == "get_project_details":
         return f"project id={result.get('id')} name={result.get('name')!r}"
@@ -193,7 +201,7 @@ def _build_cards(tool_calls: list[dict]) -> list[dict]:
         result = call["result"]
         if not isinstance(result, dict) or "error" in result:
             continue
-        if name == "search_projects":
+        if name in ("search_projects", "search_units"):
             items = result.get("projects", [])
             if items:
                 cards.append({
