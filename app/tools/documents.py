@@ -18,7 +18,7 @@ async def search_documents_handler(db: AsyncSession, args: dict, ctx: dict) -> d
                c.content,
                1 - (c.embedding <=> CAST(:qv AS vector)) AS similarity,
                p.name AS project_name
-        FROM rag_chunks c
+        FROM document_chunks c
         LEFT JOIN projects p ON p.id = c.project_id
         WHERE c.embedding IS NOT NULL
     """

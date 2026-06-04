@@ -214,7 +214,7 @@ class Video(Base):
 
 
 class DocumentChunk(Base):
-    __tablename__ = "rag_chunks"
+    __tablename__ = "document_chunks"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     project_id: Mapped[Optional[int]] = mapped_column(BigInteger, ForeignKey("projects.id"))
