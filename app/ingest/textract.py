@@ -75,7 +75,7 @@ async def ocr_asset(db: AsyncSession, asset_id: int) -> dict:
         return {"asset_id": asset_id, "status": "skipped", "reason": "no_chunks"}
 
     await db.execute(
-        text("DELETE FROM rag_chunks WHERE asset_id = :id"),
+        text("DELETE FROM document_chunks WHERE asset_id = :id"),
         {"id": asset_id},
     )
 
@@ -88,7 +88,7 @@ async def ocr_asset(db: AsyncSession, asset_id: int) -> dict:
         vec = await asyncio.to_thread(embed_text, content)
         await db.execute(
             text("""
-                INSERT INTO rag_chunks
+                INSERT INTO document_chunks
                     (project_id, asset_id, source_kind, chunk_index, content, embedding, metadata)
                 VALUES
                     (:pid, :aid, :sk, :ci, :content, CAST(:embedding AS vector), CAST(:meta AS jsonb))

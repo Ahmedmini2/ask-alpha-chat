@@ -30,7 +30,7 @@ def _extract_pdf_text(pdf_bytes: bytes) -> str:
 
 
 async def ingest_asset(db: AsyncSession, asset_id: int) -> dict:
-    """Download a project_assets row from S3, chunk it, embed, and store in rag_chunks.
+    """Download a project_assets row from S3, chunk it, embed, and store in document_chunks.
 
     Returns a dict describing what happened. Idempotent: existing chunks for this asset
     are deleted before re-inserting. Blocking boto3 / pypdf calls run in a thread so
@@ -58,7 +58,7 @@ async def ingest_asset(db: AsyncSession, asset_id: int) -> dict:
         return {"asset_id": asset_id, "status": "skipped", "reason": "no_chunks"}
 
     await db.execute(
-        text("DELETE FROM rag_chunks WHERE asset_id = :id"),
+        text("DELETE FROM document_chunks WHERE asset_id = :id"),
         {"id": asset_id},
     )
 
@@ -67,7 +67,7 @@ async def ingest_asset(db: AsyncSession, asset_id: int) -> dict:
         vec = await asyncio.to_thread(embed_text, content)
         await db.execute(
             text("""
-                INSERT INTO rag_chunks
+                INSERT INTO document_chunks
                     (project_id, asset_id, source_kind, chunk_index, content, embedding, metadata)
                 VALUES
                     (:pid, :aid, :sk, :ci, :content, CAST(:embedding AS vector), CAST(:meta AS jsonb))

@@ -14,7 +14,7 @@ async def _pending_asset_ids(kind: str) -> list[int]:
             text("""
                 SELECT a.id
                 FROM project_assets a
-                LEFT JOIN rag_chunks c ON c.asset_id = a.id
+                LEFT JOIN document_chunks c ON c.asset_id = a.id
                 WHERE a.kind = :kind
                   AND a.status = 'stored'
                   AND a.mime_type = 'application/pdf'
