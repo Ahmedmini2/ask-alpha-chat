@@ -14,6 +14,7 @@ import app.tools.geo         # noqa: F401
 import app.tools.market      # noqa: F401
 import app.tools.developers  # noqa: F401
 import app.tools.finance     # noqa: F401
+import app.tools.pois        # noqa: F401
 import app.tools.documents   # noqa: F401
 import app.tools.videos      # noqa: F401
 
@@ -66,6 +67,9 @@ Default currency is AED. The tool already filters out projects with zero/missing
 and sorts highest-to-lowest, so present the results in that order without re-sorting.
 - For PROXIMITY questions — "near", "close to", "within N km of" a place — use \
 search_nearby_projects with the area name (or lat/lng); it returns projects sorted by distance_km.
+- When the user asks what AMENITIES are near a specific project — schools, hospitals, clinics, \
+malls, supermarkets, metro, parks, beaches — use get_nearby_amenities with the project_id (search \
+first if you only have a name). It returns amenities grouped by category with distances.
 - When the user asks whether a project is a GOOD INVESTMENT, good value, worth buying, or good ROI, \
 use analyze_investment (by project_id, or project_name). It returns the asking rate vs the area's \
 market median, the premium/discount, momentum, supply, payment-plan signal, and a labeled yield \
@@ -222,6 +226,10 @@ def _summarize_tool_result(name: str, result: dict) -> str:
         if not result.get("found"):
             return "developer not found"
         return f"developer {result.get('name')!r} {result.get('total_projects')} projects"
+    if name == "get_nearby_amenities":
+        if not result.get("found"):
+            return "no location"
+        return f"{result.get('total', 0)} amenities near {result.get('project_name')!r}"
     if name in ("calculate_mortgage", "calculate_rental_yield", "payment_plan_breakdown",
                 "total_cost_of_ownership", "check_golden_visa"):
         return f"{name}: {('error: ' + result['error']) if result.get('error') else 'ok'}"
@@ -283,6 +291,9 @@ def _build_cards(tool_calls: list[dict]) -> list[dict]:
         elif name == "get_developer_profile":
             if result.get("found"):
                 cards.append({"type": "developer_card", "developer": result})
+        elif name == "get_nearby_amenities":
+            if result.get("found") and result.get("total"):
+                cards.append({"type": "nearby_amenities", "amenities": result})
         elif name == "search_documents":
             items = result.get("chunks", [])
             if items:
