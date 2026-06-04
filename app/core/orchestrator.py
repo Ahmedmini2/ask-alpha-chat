@@ -8,12 +8,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.db.models import AskAlphaConversation, AskAlphaMessage
 from app.tools.registry import registry
-import app.tools.projects  # noqa: F401  ← registers tools on import
-import app.tools.units      # noqa: F401
-import app.tools.geo        # noqa: F401
-import app.tools.market     # noqa: F401
-import app.tools.documents  # noqa: F401
-import app.tools.videos    # noqa: F401
+import app.tools.projects   # noqa: F401  ← registers tools on import
+import app.tools.units       # noqa: F401
+import app.tools.geo         # noqa: F401
+import app.tools.market      # noqa: F401
+import app.tools.developers  # noqa: F401
+import app.tools.finance     # noqa: F401
+import app.tools.documents   # noqa: F401
+import app.tools.videos      # noqa: F401
 
 log = logging.getLogger("askalpha.orchestrator")
 
@@ -69,6 +71,13 @@ use analyze_investment (by project_id, or project_name). It returns the asking r
 market median, the premium/discount, momentum, supply, payment-plan signal, and a labeled yield \
 ESTIMATE. Base your answer on those numbers and explicitly mention any data_gaps it reports; never \
 fabricate rental yields or prices. To weigh two or three projects against each other, use compare_projects.
+- For questions about a DEVELOPER — their track record, reputation, portfolio, or reliability — use \
+get_developer_profile (by developer_name).
+- For FINANCIAL CALCULATIONS use the dedicated calculators rather than doing math yourself: \
+calculate_mortgage (monthly payment, LTV/down-payment rules), calculate_rental_yield (gross/net), \
+payment_plan_breakdown (milestone cash amounts), total_cost_of_ownership (DLD 4% + commission + fees), \
+and check_golden_visa (AED 2M residency threshold). Pass the numbers the user gives; if a needed number \
+is missing, ask for it. Always state the assumptions the tool returns.
 - For questions about an area's MARKET — current prices, price per sqft, whether a location is \
 rising/cooling, transaction activity, how an area is performing — use get_market_intelligence with \
 the area/community/district name. It returns real transaction-based medians, 90-day momentum, and an \
@@ -209,6 +218,13 @@ def _summarize_tool_result(name: str, result: dict) -> str:
         return f"invest {result.get('name')!r} vs_market={result.get('valuation_vs_market')} premium={result.get('premium_to_market_pct')}%"
     if name == "compare_projects":
         return f"compared {result.get('count', 0)} projects"
+    if name == "get_developer_profile":
+        if not result.get("found"):
+            return "developer not found"
+        return f"developer {result.get('name')!r} {result.get('total_projects')} projects"
+    if name in ("calculate_mortgage", "calculate_rental_yield", "payment_plan_breakdown",
+                "total_cost_of_ownership", "check_golden_visa"):
+        return f"{name}: {('error: ' + result['error']) if result.get('error') else 'ok'}"
     if name == "search_documents":
         return f"{result.get('count', 0)} chunks"
     if name == "create_promo_video":
@@ -264,6 +280,9 @@ def _build_cards(tool_calls: list[dict]) -> list[dict]:
         elif name == "compare_projects":
             if result.get("found"):
                 cards.append({"type": "investment_comparison", "items": result.get("projects", [])})
+        elif name == "get_developer_profile":
+            if result.get("found"):
+                cards.append({"type": "developer_card", "developer": result})
         elif name == "search_documents":
             items = result.get("chunks", [])
             if items:
