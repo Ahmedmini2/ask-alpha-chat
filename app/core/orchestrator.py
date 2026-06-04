@@ -64,6 +64,11 @@ Default currency is AED. The tool already filters out projects with zero/missing
 and sorts highest-to-lowest, so present the results in that order without re-sorting.
 - For PROXIMITY questions — "near", "close to", "within N km of" a place — use \
 search_nearby_projects with the area name (or lat/lng); it returns projects sorted by distance_km.
+- When the user asks whether a project is a GOOD INVESTMENT, good value, worth buying, or good ROI, \
+use analyze_investment (by project_id, or project_name). It returns the asking rate vs the area's \
+market median, the premium/discount, momentum, supply, payment-plan signal, and a labeled yield \
+ESTIMATE. Base your answer on those numbers and explicitly mention any data_gaps it reports; never \
+fabricate rental yields or prices. To weigh two or three projects against each other, use compare_projects.
 - For questions about an area's MARKET — current prices, price per sqft, whether a location is \
 rising/cooling, transaction activity, how an area is performing — use get_market_intelligence with \
 the area/community/district name. It returns real transaction-based medians, 90-day momentum, and an \
@@ -198,6 +203,12 @@ def _summarize_tool_result(name: str, result: dict) -> str:
         if not result.get("found"):
             return "no market data"
         return f"market {result.get('matched_name')!r} rate/sqft={result.get('median_rate_aed_sqft_12m')} mom={result.get('rate_momentum_pct')}%"
+    if name == "analyze_investment":
+        if not result.get("found"):
+            return "project not found"
+        return f"invest {result.get('name')!r} vs_market={result.get('valuation_vs_market')} premium={result.get('premium_to_market_pct')}%"
+    if name == "compare_projects":
+        return f"compared {result.get('count', 0)} projects"
     if name == "search_documents":
         return f"{result.get('count', 0)} chunks"
     if name == "create_promo_video":
@@ -247,6 +258,12 @@ def _build_cards(tool_calls: list[dict]) -> list[dict]:
         elif name == "get_market_intelligence":
             if result.get("found"):
                 cards.append({"type": "market_card", "market": result})
+        elif name == "analyze_investment":
+            if result.get("found"):
+                cards.append({"type": "investment_analysis", "analysis": result})
+        elif name == "compare_projects":
+            if result.get("found"):
+                cards.append({"type": "investment_comparison", "items": result.get("projects", [])})
         elif name == "search_documents":
             items = result.get("chunks", [])
             if items:
