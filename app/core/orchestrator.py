@@ -10,6 +10,7 @@ from app.db.models import AskAlphaConversation, AskAlphaMessage
 from app.tools.registry import registry
 import app.tools.projects  # noqa: F401  ← registers tools on import
 import app.tools.units      # noqa: F401
+import app.tools.market     # noqa: F401
 import app.tools.documents  # noqa: F401
 import app.tools.videos    # noqa: F401
 
@@ -60,6 +61,10 @@ Use search_projects only for project-level queries (by name, location, sale stat
 search_projects. Convert shorthand to absolute numbers ("1M" → 1000000, "500K" → 500000). \
 Default currency is AED. The tool already filters out projects with zero/missing price \
 and sorts highest-to-lowest, so present the results in that order without re-sorting.
+- For questions about an area's MARKET — current prices, price per sqft, whether a location is \
+rising/cooling, transaction activity, how an area is performing — use get_market_intelligence with \
+the area/community/district name. It returns real transaction-based medians, 90-day momentum, and an \
+activity label. If it returns found=false we have no data for that area; say so plainly.
 - For questions about content that lives in the prose of marketing materials — payment plans, \
 amenity details, finishings, location narratives, ROI claims — use search_documents. If the user \
 named a specific project, search_projects first to get its ID, then pass project_id to search_documents.
@@ -184,6 +189,10 @@ def _summarize_tool_result(name: str, result: dict) -> str:
         return f"{result.get('count', 0)} projects"
     if name == "get_project_details":
         return f"project id={result.get('id')} name={result.get('name')!r}"
+    if name == "get_market_intelligence":
+        if not result.get("found"):
+            return "no market data"
+        return f"market {result.get('matched_name')!r} rate/sqft={result.get('median_rate_aed_sqft_12m')} mom={result.get('rate_momentum_pct')}%"
     if name == "search_documents":
         return f"{result.get('count', 0)} chunks"
     if name == "create_promo_video":
@@ -221,6 +230,9 @@ def _build_cards(tool_calls: list[dict]) -> list[dict]:
         elif name == "get_project_details":
             if "id" in result:
                 cards.append({"type": "project_detail", "project": result})
+        elif name == "get_market_intelligence":
+            if result.get("found"):
+                cards.append({"type": "market_card", "market": result})
         elif name == "search_documents":
             items = result.get("chunks", [])
             if items:

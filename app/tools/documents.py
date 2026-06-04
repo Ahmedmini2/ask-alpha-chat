@@ -1,3 +1,4 @@
+import asyncio
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.embeddings import embed_text
@@ -12,7 +13,9 @@ async def search_documents_handler(db: AsyncSession, args: dict, ctx: dict) -> d
     source_kind = args.get("source_kind")
     limit = min(int(args.get("limit", 5)), 15)
 
-    vec = embed_text(query)
+    # embed_text is blocking boto3; run it off the event loop so concurrent
+    # requests aren't stalled (the ingest path already does this).
+    vec = await asyncio.to_thread(embed_text, query)
     sql = """
         SELECT c.id, c.project_id, c.asset_id, c.source_kind, c.chunk_index,
                c.content,
