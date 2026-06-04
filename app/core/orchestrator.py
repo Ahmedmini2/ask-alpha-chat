@@ -16,6 +16,7 @@ import app.tools.developers  # noqa: F401
 import app.tools.finance     # noqa: F401
 import app.tools.pois        # noqa: F401
 import app.tools.property_monitor_tools  # noqa: F401
+import app.tools.analysis    # noqa: F401
 import app.tools.documents   # noqa: F401
 import app.tools.videos      # noqa: F401
 
@@ -234,7 +235,7 @@ def _summarize_tool_result(name: str, result: dict) -> str:
     if name in ("calculate_mortgage", "calculate_rental_yield", "payment_plan_breakdown",
                 "total_cost_of_ownership", "check_golden_visa"):
         return f"{name}: {('error: ' + result['error']) if result.get('error') else 'ok'}"
-    if name == "search_documents":
+    if name in ("search_documents", "agentic_search"):
         return f"{result.get('count', 0)} chunks"
     if name == "create_promo_video":
         return f"video_id={result.get('video_id')} status={result.get('status')}"
@@ -295,7 +296,7 @@ def _build_cards(tool_calls: list[dict]) -> list[dict]:
         elif name == "get_nearby_amenities":
             if result.get("found") and result.get("total"):
                 cards.append({"type": "nearby_amenities", "amenities": result})
-        elif name == "search_documents":
+        elif name in ("search_documents", "agentic_search"):
             items = result.get("chunks", [])
             if items:
                 cards.append({"type": "document_quotes", "items": items})
