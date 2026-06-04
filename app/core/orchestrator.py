@@ -15,6 +15,7 @@ import app.tools.market      # noqa: F401
 import app.tools.developers  # noqa: F401
 import app.tools.finance     # noqa: F401
 import app.tools.pois        # noqa: F401
+import app.tools.property_monitor_tools  # noqa: F401
 import app.tools.documents   # noqa: F401
 import app.tools.videos      # noqa: F401
 

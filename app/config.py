@@ -26,6 +26,11 @@ class Settings(BaseSettings):
     bedrock_image_region: str = "us-west-2"
     bedrock_image_model_id: str = "stability.stable-image-core-v1:1"
 
+    # Property Monitor AVM API (valuations + rental/yield data). Two key headers.
+    pm_api_key: str = ""
+    pm_company_key: str = ""
+    pm_base_url: str = "https://api.propertymonitor.com"
+
     # HeyGen (AI avatar video generation)
     heygen_api_key: str = ""
     heygen_avatar_id: str = "Daisy-inskirt-20220818"   # HeyGen's default sample avatar
