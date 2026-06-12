@@ -15,6 +15,17 @@ class Settings(BaseSettings):
     # Falls back to bedrock_model_id when unset.
     bedrock_routing_model_id: str = ""
     bedrock_embed_model_id: str = "amazon.titan-embed-text-v2:0"
+    # Model that writes the promo-video narration scripts. Defaults to OpenAI's
+    # open-weight gpt-oss model hosted on Bedrock (serverless, first-party). Use the
+    # BARE id — gpt-oss has NO cross-region "us." inference profile in commercial
+    # regions; the plain id works in-region (us-east-1, us-west-2, eu-*, ap-*, ...).
+    # Set bedrock_script_region if gpt-oss isn't enabled in aws_region for your account.
+    bedrock_script_model_id: str = "openai.gpt-oss-120b-1:0"
+    bedrock_script_region: str = ""  # falls back to aws_region when blank
+    # gpt-oss is a reasoning model; "low" keeps script generation fast/cheap. Passed via
+    # additionalModelRequestFields (not inferenceConfig). Blank to omit. We retry without
+    # it if the model/region rejects the field.
+    bedrock_script_reasoning_effort: str = "low"
     # Bedrock prompt caching for the static system prompt + tool config. Only enable
     # once on a model that supports it (Claude on Bedrock). Safe to leave off on Llama.
     enable_prompt_caching: bool = False
@@ -38,6 +49,14 @@ class Settings(BaseSettings):
     # Vertical 1080x1920 — Reels / TikTok native.
     heygen_video_width: int = 1080
     heygen_video_height: int = 1920
+
+    # Captioning post-step (faster-whisper transcription + Remotion render).
+    # See app/captioning and remotion/. caption_model_size: tiny|base|small|medium.
+    caption_model_size: str = "base"
+    caption_render_concurrency: int = 1
+    # Optional path to a Chromium executable for Remotion (e.g. the Playwright one
+    # on WSL). Leave empty in Docker, where `remotion browser ensure` provides one.
+    remotion_browser_executable: str = ""
 
     # Telegram bot
     telegram_bot_token: str = ""

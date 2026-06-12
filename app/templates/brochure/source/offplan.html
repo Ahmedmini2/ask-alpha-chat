@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<!-- @dsCard group="Brand" name="Arancia Yards, Sales Offer" subtitle="6-sheet offer · brief · location · interiors · plans · amenities · pricing" viewport="1123x794" -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Arancia Yards, Sales Offer | Allegiance Real Estate</title>
+<link rel="stylesheet" href="colors_and_type.css">
+<script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js"></script>
+<style>
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;background:#e9e7e1;}
+body{font-family:var(--sans);-webkit-font-smoothing:antialiased;}
+
+/* ---- Arancia accent tokens (layered over the Allegiance system) ---- */
+:root{
+  --arancia-terra:#B5673B;     /* "arancia" = orange, terracotta accent */
+  --arancia-terra-deep:#9A5430;
+  --arancia-blue:#27407C;      /* azulejo Mediterranean blue */
+}
+
+/* ---- scaling stage: A4 landscape sheets stacked ---- */
+#stage{ display:flex; flex-direction:column; align-items:center; gap:26px; padding:26px 0 40px; }
+.sheet{
+  width:1123px; height:794px; background:var(--paper);
+  position:relative; overflow:hidden; flex:none;
+  transform-origin:top center; box-shadow:0 18px 50px rgba(7,52,44,.14);
+}
+
+/* shared bits */
+.tile-band{ background:url("assets/arancia/tile-blue.jpg") center/120px repeat; }
+.eyebrow{ font-family:var(--sans); font-weight:600; font-size:10px; letter-spacing:.32em; text-transform:uppercase; color:var(--arancia-terra); }
+.kicker{ font-family:var(--sans); font-weight:500; font-size:10.5px; letter-spacing:.26em; text-transform:uppercase; color:var(--slate-soft); }
+.disp{ font-family:var(--serif-display); }
+.script{ font-family:"Playfair Display", var(--serif-alt); font-style:italic; font-weight:500; text-transform:none; letter-spacing:.005em; color:var(--arancia-terra); }
+.rule-gold{ width:46px; }
+.brandfoot{ display:flex; flex-direction:column; align-items:center; gap:8px; }
+.brandfoot img{ height:51px; width:auto; display:block; }
+.brandfoot .cities{ font-family:var(--sans); font-weight:500; font-size:9px; letter-spacing:.24em; text-transform:uppercase; color:var(--slate-soft); white-space:nowrap; }
+.cap{ font-family:var(--sans); font-weight:500; font-size:9.5px; letter-spacing:.2em; text-transform:uppercase; color:var(--slate); }
+
+/* =================================================================
+   PAGE 1, COVER
+   ================================================================= */
+.cover{ display:grid; grid-template-columns:1fr 462px; }
+.cover__hero{ position:relative; overflow:hidden; }
+.cover__hero > img{ width:100%; height:100%; object-fit:cover; display:block; }
+.cover__hero::after{ content:""; position:absolute; inset:0; background:linear-gradient(0deg, rgba(7,52,44,.62) 0%, rgba(7,52,44,0) 42%), linear-gradient(105deg, rgba(7,52,44,.34) 0%, rgba(7,52,44,0) 46%); }
+.cover__photoband{ position:absolute; left:0; right:0; bottom:0; height:7px; z-index:2; }
+.cover__title{ position:absolute; left:34px; right:30px; bottom:30px; z-index:2; color:#fff; }
+.cover__title .k{ font-family:var(--sans); font-weight:600; font-size:10px; letter-spacing:.28em; text-transform:uppercase; color:rgba(255,255,255,.85); margin-bottom:12px; }
+.cover__logomark{ display:block; height:128px; width:auto; margin:0 0 14px -3px; filter:drop-shadow(0 3px 16px rgba(7,28,22,.45)); }
+.cover__title .loc{ font-family:var(--sans); font-weight:500; font-size:10.5px; letter-spacing:.2em; text-transform:uppercase; color:rgba(255,255,255,.92); }
+
+.cover__pane{ padding:34px 38px 30px; display:flex; flex-direction:column; min-width:0; }
+.cover__panehead{ display:flex; align-items:flex-start; justify-content:space-between; gap:18px; margin-bottom:6px; }
+.cover__numhead .e{ display:block; font-family:var(--sans); font-weight:600; font-size:9.5px; letter-spacing:.26em; text-transform:uppercase; color:var(--arancia-terra); margin-bottom:7px; }
+.cover__numhead .h{ font-family:var(--serif-display); font-weight:400; font-size:26px; letter-spacing:.02em; color:var(--pine); line-height:1; }
+.cover__pane .cover__logo{ height:84px; width:auto; display:block; }
+.cover__panelogo{ flex:1; min-height:0; display:flex; align-items:center; justify-content:center; padding-top:10px; }
+
+.cnumlist{ min-height:0; display:flex; flex-direction:column; margin-top:10px; }
+.cnumrow{ display:flex; align-items:baseline; justify-content:space-between; gap:14px; padding:14px 2px; border-bottom:1px solid var(--hairline); }
+.cnumrow:first-child{ border-top:1px solid var(--hairline); }
+.cnumrow .k{ font-family:var(--sans); font-weight:500; font-size:11.5px; letter-spacing:.02em; color:var(--slate); line-height:1.2; white-space:nowrap; }
+.cnumrow .v{ font-family:var(--sans); font-weight:700; font-size:15.5px; color:var(--pine); line-height:1; letter-spacing:-.01em; white-space:nowrap; }
+.cnumrow .v .u{ font-weight:600; font-size:10.5px; color:var(--slate); }
+
+/* =================================================================
+   PAGE TITLES (interior sheets)
+   ================================================================= */
+.page{ padding:44px 56px 30px; display:flex; flex-direction:column; }
+.page__head{ display:flex; align-items:flex-end; justify-content:space-between; gap:24px; margin-bottom:22px; }
+.page__head .ttl{ font-family:var(--serif-display); font-weight:400; font-size:31px; letter-spacing:.07em; text-transform:uppercase; color:var(--pine); line-height:1; white-space:nowrap; }
+.page__head .num{ font-family:"Playfair Display", var(--serif-alt); font-style:italic; font-size:34px; color:var(--gold-deep); }
+.page__head .sub{ max-width:430px; text-align:right; font-size:11.5px; line-height:1.55; color:var(--slate); }
+.headrule{ height:2px; background:var(--arancia-terra); width:54px; margin-bottom:0; }
+
+/* =================================================================
+   PAGE 2, LOCATION
+   ================================================================= */
+.loc{ display:flex; flex-direction:column; gap:16px; flex:1; min-height:0; }
+.loc__lead{ font-size:12.5px; line-height:1.6; color:var(--ink); margin:0; max-width:760px; }
+.loc__grid{ display:grid; grid-template-columns:repeat(4,1fr); border-top:1px solid var(--hairline); border-left:1px solid var(--hairline); }
+.timecell{ border-right:1px solid var(--hairline); border-bottom:1px solid var(--hairline); padding:12px 16px; display:flex; align-items:baseline; justify-content:space-between; gap:12px; }
+.timecell .dest{ font-family:var(--sans); font-weight:500; font-size:12.5px; color:var(--ink); line-height:1.25; }
+.timecell .mins{ font-family:var(--sans); font-weight:600; font-size:13px; color:var(--pine); line-height:1.25; white-space:nowrap; }
+.timecell .mins small{ font-family:var(--sans); font-weight:500; font-size:9px; letter-spacing:.12em; text-transform:uppercase; color:var(--slate-soft); margin-left:3px; }
+.loc__note{ font-size:10px; color:var(--slate-soft); letter-spacing:.04em; margin:0; }
+.loc__map{ flex:1; min-height:0; border:1px solid var(--hairline); border-radius:2px; overflow:hidden; position:relative; }
+.loc__map iframe{ width:100%; height:100%; border:0; display:block; }
+.loc__maptag{ position:absolute; left:0; top:0; background:var(--pine); color:#fff; font-family:var(--sans); font-weight:600; font-size:9.5px; letter-spacing:.18em; text-transform:uppercase; padding:7px 14px; white-space:nowrap; }
+
+/* =================================================================
+   PAGE 3, INTERIORS & EXTERIORS
+   ================================================================= */
+.gal{ flex:1; min-height:0; display:grid; grid-template-columns:2fr 1fr 1fr; grid-template-rows:1fr 1fr; gap:12px; }
+.gal figure{ margin:0; position:relative; overflow:hidden; border-radius:2px; }
+.gal figure img{ width:100%; height:100%; object-fit:cover; display:block; }
+.gal .big{ grid-row:1 / span 2; }
+.gal figcaption{ position:absolute; left:12px; bottom:11px; color:#fff; font-family:var(--sans); font-weight:600; font-size:9.5px; letter-spacing:.2em; text-transform:uppercase; text-shadow:0 1px 8px rgba(0,0,0,.6); }
+.galfeat{ display:flex; justify-content:center; gap:40px; margin-top:16px; padding-top:14px; border-top:1px solid var(--hairline); }
+.galfeat .ft{ display:flex; align-items:center; gap:9px; }
+.galfeat .ft svg{ width:18px; height:18px; stroke-width:1.4; color:var(--arancia-terra); }
+.galfeat .ft span{ font-size:11px; color:var(--ink); line-height:1.3; }
+.galfeat .ft b{ font-weight:600; }
+
+/* =================================================================
+   PAGE 4, FLOOR PLANS
+   ================================================================= */
+.plans{ flex:1; min-height:0; display:flex; flex-direction:column; gap:13px; }
+.plans__row{ display:grid; gap:13px; min-height:0; flex:1; }
+.plans__row--top{ grid-template-columns:1fr 1fr; }
+.plans__row--bot{ grid-template-columns:1fr; }
+.planc{ border:1px solid var(--hairline); border-radius:2px; overflow:hidden; background:#fff; display:flex; flex-direction:column; min-height:0; }
+.planc__img{ flex:1; min-height:0; display:flex; align-items:center; justify-content:center; padding:10px 12px; background:#fff; }
+.planc__img img{ max-width:100%; max-height:100%; object-fit:contain; display:block; }
+.planc__cap{ border-top:1px solid var(--hairline); padding:10px 18px; display:flex; align-items:baseline; justify-content:space-between; gap:16px; }
+.planc__name{ font-family:var(--serif-display); font-size:20px; color:var(--pine); letter-spacing:.03em; line-height:1; white-space:nowrap; }
+.planc__name .n{ color:var(--arancia-terra); }
+.planc__name small{ font-family:var(--sans); font-weight:600; font-size:8.5px; letter-spacing:.16em; text-transform:uppercase; color:var(--slate-soft); margin-left:10px; }
+.planc__areas{ display:flex; gap:18px; }
+.planc__areas span{ font-family:var(--sans); font-size:11px; color:var(--slate); white-space:nowrap; }
+.planc__areas span b{ font-weight:600; color:var(--ink); }
+.planc__areas .tot b{ color:var(--pine); }
+.plans-note{ margin-top:12px; font-size:10px; color:var(--slate-soft); letter-spacing:.03em; }
+
+/* =================================================================
+   PAGE 5, AMENITIES
+   ================================================================= */
+.am{ flex:1; min-height:0; display:grid; grid-template-columns:1fr 1fr; gap:30px; }
+.amcol{ display:flex; flex-direction:column; min-height:0; }
+.amcol__head{ display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:11px; }
+.amcol__head .t{ font-family:var(--serif-display); font-weight:400; font-size:23px; letter-spacing:.03em; color:var(--pine); line-height:1; white-space:nowrap; }
+.amcol__head .t .n{ color:var(--arancia-terra); }
+.amcol__head .c{ font-family:var(--sans); font-weight:600; font-size:8.5px; letter-spacing:.16em; text-transform:uppercase; color:var(--slate-soft); white-space:nowrap; flex:none; }
+.amcol__hero{ position:relative; overflow:hidden; border-radius:2px; height:232px; flex:none; }
+.amcol__hero img{ width:100%; height:100%; object-fit:cover; display:block; }
+.amcol__duo{ display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:10px; }
+.amcol__duo figure{ margin:0; position:relative; overflow:hidden; border-radius:2px; height:140px; }
+.amcol__duo img{ width:100%; height:100%; object-fit:cover; display:block; }
+.amfig{ position:relative; }
+.amfig figcaption{ position:absolute; left:11px; bottom:9px; color:#fff; font-family:var(--sans); font-weight:600; font-size:8.5px; letter-spacing:.16em; text-transform:uppercase; text-shadow:0 1px 7px rgba(0,0,0,.7); }
+.amcol__list{ list-style:none; margin:14px 0 0; padding:0; columns:2; column-gap:20px; }
+.amcol__list li{ font-family:var(--sans); font-size:11px; line-height:1.45; color:var(--ink); padding:5px 0 5px 14px; position:relative; break-inside:avoid; border-top:1px solid var(--hairline-soft); }
+.amcol__list li:first-child{ border-top:0; }
+.amcol__list li::before{ content:""; position:absolute; left:0; top:11px; width:4px; height:4px; background:var(--gold); border-radius:50%; }
+.am__spine{ margin-top:16px; padding-top:13px; border-top:1px solid var(--hairline); text-align:center; font-family:var(--serif-display); font-style:italic; font-size:15px; color:var(--slate); }
+
+/* =================================================================
+   PAGE 6, RESIDENCES & PRICING
+   ================================================================= */
+.pr{ flex:1; min-height:0; display:flex; flex-direction:column; }
+.pr__table{ display:flex; flex-direction:column; }
+.pr__hr{ display:grid; grid-template-columns:1.4fr 1fr 1fr 1.1fr; padding:0 6px 10px; }
+.pr__hr span{ font-family:var(--sans); font-weight:600; font-size:9px; letter-spacing:.2em; text-transform:uppercase; color:var(--slate-soft); }
+.pr__hr span.r{ text-align:right; }
+.pr__row{ display:grid; grid-template-columns:1.4fr 1fr 1fr 1.1fr; align-items:center; padding:18px 6px; border-top:1px solid var(--hairline); }
+.pr__table .pr__row:last-child{ border-bottom:1px solid var(--hairline); }
+.pr__type{ font-family:var(--serif-display); font-size:23px; color:var(--pine); letter-spacing:.03em; }
+.pr__type small{ display:block; font-family:var(--sans); font-weight:500; font-size:9px; letter-spacing:.16em; text-transform:uppercase; color:var(--slate-soft); margin-top:5px; }
+.pr__cell{ font-family:var(--sans); font-size:14px; color:var(--ink); }
+.pr__cell b{ font-weight:600; }
+.pr__price{ text-align:right; font-family:var(--sans); font-weight:700; font-size:18px; color:var(--pine); }
+.ph{ color:var(--gold-deep); border-bottom:1px dotted var(--gold); padding-bottom:1px; font-weight:600; }
+
+/* payment plan, full-width spread */
+.pr__pay{ margin-top:24px; }
+.pr__payhead{ display:flex; align-items:baseline; justify-content:space-between; gap:16px; margin-bottom:12px; }
+.pr__pay h4{ font-family:var(--sans); font-weight:600; font-size:10px; letter-spacing:.22em; text-transform:uppercase; color:var(--arancia-terra); margin:0; }
+.pr__paysub{ font-family:var(--sans); font-size:10px; letter-spacing:.04em; color:var(--slate-soft); margin:0; }
+.payplan{ display:grid; grid-template-columns:repeat(7,1fr); border-top:1px solid var(--hairline); border-left:1px solid var(--hairline); }
+.paycell{ border-right:1px solid var(--hairline); border-bottom:1px solid var(--hairline); padding:14px 14px 15px; }
+.paycell .pct{ font-family:var(--sans); font-weight:700; font-size:23px; color:var(--pine); line-height:1; letter-spacing:-.01em; }
+.paycell .lbl{ font-family:var(--sans); font-weight:600; font-size:8.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--ink); margin-top:10px; }
+.paycell .dt{ font-family:var(--sans); font-size:10px; color:var(--slate); margin-top:4px; }
+.paycell.is-final{ background:var(--paper-warm); }
+.paycell.is-final .pct{ color:var(--arancia-terra); }
+
+/* agent, composed bar at the bottom */
+.pr__agent{ margin-top:auto; padding-top:18px; border-top:1px solid var(--hairline); display:flex; align-items:center; gap:22px; }
+.pr__agent img.ph-photo{ width:78px; height:96px; object-fit:cover; filter:grayscale(1); border-radius:1px; flex:none; }
+.pr__agent .lab{ font-family:var(--sans); font-weight:600; font-size:8.5px; letter-spacing:.2em; text-transform:uppercase; color:var(--arancia-terra); margin-bottom:5px; }
+.pr__agent .nm{ font-family:var(--serif-display); font-size:22px; color:var(--pine); letter-spacing:.01em; }
+.pr__agent .who{ flex:none; }
+.pr__agent .sep{ width:1px; align-self:stretch; background:var(--hairline); }
+.pr__agent .mt{ font-family:var(--sans); font-size:11.5px; line-height:1.7; color:var(--slate); }
+.pr__agent .mt a{ color:var(--slate); text-decoration:none; }
+.pr__agent .org{ margin-left:auto; text-align:right; font-family:var(--sans); font-weight:600; font-size:9px; letter-spacing:.18em; text-transform:uppercase; color:var(--slate-soft); }
+
+/* footer placement */
+.page .brandfoot{ margin-top:16px; }
+
+/* print */
+@media print{
+  @page{ size:A4 landscape; margin:0; }
+  html,body{ background:#fff; }
+  #stage{ gap:0; padding:0; }
+  .sheet{ box-shadow:none; transform:none!important; margin:0!important; page-break-after:always; break-after:page; }
+  .sheet:last-child{ page-break-after:auto; }
+}
+</style>
+</head>
+<body>
+<div id="stage">
+
+  <!-- ============ PAGE 1, COVER ============ -->
+  <section class="sheet cover" data-screen-label="01 · Cover">
+    <div class="cover__hero">
+      <img src="assets/arancia/cover-facade.jpg" alt="Arancia Yards, facade at dusk">
+      <div class="cover__photoband tile-band"></div>
+      <div class="cover__title">
+        <div class="k">The Yards · City of Arabia · Dubai</div>
+        <img class="cover__logomark" src="assets/arancia/logo-arancia-yards.png" alt="Arancia Yards by Beyond">
+        <div class="loc">The essence of cultivated living</div>
+      </div>
+    </div>
+
+    <div class="cover__pane">
+      <div class="cover__panehead">
+        <div class="cover__numhead">
+          <span class="e">Investment Summary</span>
+          <span class="h">Numbers at a Glance</span>
+        </div>
+      </div>
+
+      <div class="cnumlist">
+        <div class="cnumrow"><span class="k">Entry Price</span><span class="v"><span class="u">AED</span> 1M</span></div>
+        <div class="cnumrow"><span class="k">Price / sqft</span><span class="v"><span class="u">AED</span> 00</span></div>
+        <div class="cnumrow"><span class="k">Cheaper than Area Average</span><span class="v">00%</span></div>
+        <div class="cnumrow"><span class="k">Net Yield</span><span class="v">00%</span></div>
+        <div class="cnumrow"><span class="k">Area Average Rent Return</span><span class="v">00%</span></div>
+        <div class="cnumrow"><span class="k">Annual Appreciation</span><span class="v">00%</span></div>
+        <div class="cnumrow"><span class="k">Y5 Projected Value</span><span class="v"><span class="u">AED</span> 00</span></div>
+        <div class="cnumrow"><span class="k">Service Charge / sqft</span><span class="v"><span class="u">AED</span> 00</span></div>
+        <div class="cnumrow"><span class="k">Golden Visa Eligible</span><span class="v">Yes</span></div>
+        <div class="cnumrow"><span class="k">Days on Market</span><span class="v">00</span></div>
+        <div class="cnumrow"><span class="k">Time to Sell in Area</span><span class="v">00</span></div>
+        <div class="cnumrow"><span class="k">Anticipated Handover</span><span class="v">Q1 '29</span></div>
+      </div>
+
+      <div class="cover__panelogo">
+        <img class="cover__logo" src="assets/allegiance-green.png" alt="Allegiance Real Estate">
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ PAGE 2, THE LOCATION ============ -->
+  <section class="sheet page" data-screen-label="02 · The Location">
+    <div class="page__head">
+      <div>
+        <div class="ttl">The Location</div>
+      </div>
+      <div class="sub">A new destination within City of Arabia, Mediterranean-inspired landscapes set minutes from Dubai's landmark addresses, malls and airports.</div>
+    </div>
+
+    <div class="loc">
+      <p class="loc__lead">Woven with a nursery, school, clinic and mosque, everyday needs stay close to home, while the city's destinations remain a short drive away.</p>
+      <div class="loc__grid">
+        <div class="timecell"><span class="dest">Global Village</span><span class="mins">10<small>min</small></span></div>
+        <div class="timecell"><span class="dest">Silicon Central Mall</span><span class="mins">15<small>min</small></span></div>
+        <div class="timecell"><span class="dest">Dubai Miracle Garden</span><span class="mins">15<small>min</small></span></div>
+        <div class="timecell"><span class="dest">Hamdan Sports Complex</span><span class="mins">15<small>min</small></span></div>
+        <div class="timecell"><span class="dest">Mall of the Emirates</span><span class="mins">16<small>min</small></span></div>
+        <div class="timecell"><span class="dest">Downtown Dubai</span><span class="mins">20<small>min</small></span></div>
+        <div class="timecell"><span class="dest">Dubai International Airport</span><span class="mins">25<small>min</small></span></div>
+        <div class="timecell"><span class="dest">DWC, Al Maktoum Airport</span><span class="mins">38<small>min</small></span></div>
+      </div>
+      <div class="loc__note">Drive times indicative, via Sheikh Mohammed Bin Zayed Road.</div>
+      <div class="loc__map">
+        <iframe src="https://maps.google.com/maps?q=City%20of%20Arabia%2C%20Dubailand%2C%20Dubai&z=12&output=embed" loading="lazy" referrerpolicy="no-referrer-when-downgrade" title="City of Arabia, Dubai map"></iframe>
+        <div class="loc__maptag">City of Arabia, Dubailand</div>
+      </div>
+    </div>
+
+    <div class="brandfoot">
+      <img src="assets/allegiance-green.png" alt="Allegiance Real Estate">
+      <div class="cities">Dubai · Sydney · Riyadh · Paris · Beirut · Tokyo · Ljubljana</div>
+    </div>
+  </section>
+
+  <!-- ============ PAGE 3, INTERIORS & EXTERIORS ============ -->
+  <section class="sheet page" data-screen-label="03 · Inside & Out">
+    <div class="page__head">
+      <div>
+        <div class="ttl">INSIDE AND OUTSIDE</div>
+      </div>
+      <div class="sub">Generous 3.1m ceilings, floor-to-ceiling windows and private terraces, interiors of porcelain, timber and softly finished plaster.</div>
+    </div>
+
+    <div class="gal">
+      <figure class="big"><img src="assets/arancia/int-living.jpg" alt="Living room"><figcaption>Living Room</figcaption></figure>
+      <figure><img src="assets/arancia/int-kitchen.jpg" alt="Kitchen"><figcaption>Kitchen</figcaption></figure>
+      <figure><img src="assets/arancia/int-bedroom.jpg" alt="Bedroom"><figcaption>Bedroom</figcaption></figure>
+      <figure><img src="assets/arancia/int-bathroom.jpg" alt="Bathroom"><figcaption>Bathroom</figcaption></figure>
+      <figure><img src="assets/arancia/ext-pool.jpg" alt="Exterior, pool &amp; gardens"><figcaption>Gardens &amp; Pool</figcaption></figure>
+    </div>
+
+    <div class="galfeat">
+      <div class="ft"><span data-lucide="move-vertical"></span><span><b>3.1m</b> ceiling heights</span></div>
+      <div class="ft"><span data-lucide="panels-top-left"></span><span>Floor-to-ceiling windows</span></div>
+      <div class="ft"><span data-lucide="sun"></span><span>Private terraces</span></div>
+      <div class="ft"><span data-lucide="chef-hat"></span><span>European appliances</span></div>
+      <div class="ft"><span data-lucide="layers"></span><span>Porcelain flooring</span></div>
+    </div>
+
+    <div class="brandfoot">
+      <img src="assets/allegiance-green.png" alt="Allegiance Real Estate">
+      <div class="cities">Dubai · Sydney · Riyadh · Paris · Beirut · Tokyo · Ljubljana</div>
+    </div>
+  </section>
+
+  <!-- ============ PAGE 4, FLOOR PLANS ============ -->
+  <section class="sheet page" data-screen-label="04 · Floor Plans">
+    <div class="page__head">
+      <div>
+        <div class="ttl">Floor Plans</div>
+      </div>
+      <div class="sub">Thoughtfully planned 1, 2 and 3 bedroom layouts prioritising space, light and comfort, with views across the central landscape.</div>
+    </div>
+
+    <div class="plans">
+      <div class="plans__row plans__row--top">
+        <div class="planc">
+          <div class="planc__img"><img src="assets/arancia/fp-1br-white.jpg" alt="One bedroom floor plan"></div>
+          <div class="planc__cap">
+            <div class="planc__name"><span class="n">One</span> Bedroom<small>Type 02</small></div>
+            <div class="planc__areas">
+              <span>Internal <b>608</b></span>
+              <span>Terrace <b>410</b></span>
+              <span class="tot">Total <b>1,019 sqft</b></span>
+            </div>
+          </div>
+        </div>
+        <div class="planc">
+          <div class="planc__img"><img src="assets/arancia/fp-2br-white.jpg" alt="Two bedroom floor plan"></div>
+          <div class="planc__cap">
+            <div class="planc__name"><span class="n">Two</span> Bedroom<small>Type A-4</small></div>
+            <div class="planc__areas">
+              <span>Internal <b>918</b></span>
+              <span>Terrace <b>205</b></span>
+              <span class="tot">Total <b>1,123 sqft</b></span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="plans__row plans__row--bot">
+        <div class="planc">
+          <div class="planc__img"><img src="assets/arancia/fp-3br-white.jpg" alt="Three bedroom floor plan"></div>
+          <div class="planc__cap">
+            <div class="planc__name"><span class="n">Three</span> Bedroom<small>Type B</small></div>
+            <div class="planc__areas">
+              <span>Internal <b>1,325</b></span>
+              <span>Terrace <b>432</b></span>
+              <span class="tot">Total <b>1,757 sqft</b></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="brandfoot">
+      <img src="assets/allegiance-green.png" alt="Allegiance Real Estate">
+      <div class="cities">Dubai · Sydney · Riyadh · Paris · Beirut · Tokyo · Ljubljana</div>
+    </div>
+  </section>
+
+  <!-- ============ PAGE 5, AMENITIES ============ -->
+  <section class="sheet page" data-screen-label="05 · Amenities">
+    <div class="page__head">
+      <div>
+        <div class="ttl">Amenities</div>
+      </div>
+    </div>
+
+    <div class="am">
+      <div class="amcol">
+        <div class="amcol__head">
+          <span class="t"><span class="n">Outdoor</span> Amenities</span>
+          <span class="c">Set in the gardens</span>
+        </div>
+        <div class="amcol__hero amfig">
+          <img src="assets/arancia/am-lagoon.jpg" alt="Lagoon pool">
+          <figcaption>Lagoon Pool</figcaption>
+        </div>
+        <div class="amcol__duo">
+          <figure class="amfig"><img src="assets/arancia/am-lappool.jpg" alt="Lounge pool with lap pool"><figcaption>Lounge &amp; Lap Pool</figcaption></figure>
+          <figure class="amfig"><img src="assets/arancia/am-reading.jpg" alt="Poolside reading pocket"><figcaption>Reading Pockets</figcaption></figure>
+        </div>
+        <ul class="amcol__list">
+          <li>Lagoon Pool</li>
+          <li>Lounge Pool with Lap Pool</li>
+          <li>Kid's Play Areas</li>
+          <li>Seating / Co-working / Reading Pockets</li>
+          <li>Entry Plaza &amp; Retail Plaza</li>
+          <li>Yoga Areas</li>
+          <li>Sports Court</li>
+          <li>Amphitheatre</li>
+        </ul>
+      </div>
+
+      <div class="amcol">
+        <div class="amcol__head">
+          <span class="t"><span class="n">Indoor</span> Amenities</span>
+          <span class="c">Climate-conscious comfort</span>
+        </div>
+        <div class="amcol__hero amfig">
+          <img src="assets/arancia/am-garden.jpg" alt="Indoor garden">
+          <figcaption>Indoor Garden &amp; Kid's Club</figcaption>
+        </div>
+        <div class="amcol__duo">
+          <figure class="amfig"><img src="assets/arancia/am-lounge.jpg" alt="Residents lounge and games"><figcaption>Residents' Lounge</figcaption></figure>
+          <figure class="amfig"><img src="assets/arancia/am-kids.jpg" alt="Indoor kids club"><figcaption>Kid's Club</figcaption></figure>
+        </div>
+        <ul class="amcol__list">
+          <li>Kid's Club</li>
+          <li>Play &amp; Gaming Rooms</li>
+          <li>Multipurpose Rooms</li>
+          <li>Gyms</li>
+          <li>Spa</li>
+          <li>Residents' Lounge</li>
+          <li>Cinema Room</li>
+          <li>Commercial Gym</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="brandfoot">
+      <img src="assets/allegiance-green.png" alt="Allegiance Real Estate">
+      <div class="cities">Dubai · Sydney · Riyadh · Paris · Beirut · Tokyo · Ljubljana</div>
+    </div>
+  </section>
+
+  <!-- ============ PAGE 6, RESIDENCES & PRICING ============ -->
+  <section class="sheet page" data-screen-label="06 · Residences & Pricing">
+    <div class="page__head">
+      <div>
+        <div class="ttl">PRICING AND PAYMENT PLAN</div>
+      </div>
+      <div class="sub">A collection of 272 residences across three buildings, on a flexible 40/60 payment plan. Starting prices below.</div>
+    </div>
+
+    <div class="pr">
+      <div class="pr__table">
+        <div class="pr__hr">
+          <span>Residence</span><span>Size from</span><span>Configuration</span><span class="r">Price from</span>
+        </div>
+        <div class="pr__row">
+          <div class="pr__type">One Bedroom<small>1 BR</small></div>
+          <div class="pr__cell"><b>730</b> sqft</div>
+          <div class="pr__cell">Terrace &middot; valley views</div>
+          <div class="pr__price">AED 1M</div>
+        </div>
+        <div class="pr__row">
+          <div class="pr__type">Two Bedroom<small>2 BR</small></div>
+          <div class="pr__cell"><b>1,170</b> sqft</div>
+          <div class="pr__cell">Terrace &middot; valley views</div>
+          <div class="pr__price">AED 2.1M</div>
+        </div>
+        <div class="pr__row">
+          <div class="pr__type">Three Bedroom<small>3 BR</small></div>
+          <div class="pr__cell"><b>1,700</b> sqft</div>
+          <div class="pr__cell">Terrace &middot; valley views</div>
+          <div class="pr__price">AED 3.3M</div>
+        </div>
+      </div>
+
+      <div class="pr__pay">
+        <div class="pr__payhead">
+          <h4>Payment Plan</h4>
+          <p class="pr__paysub">40 / 60 &middot; spread across construction, balance on completion &middot; anticipated handover Q1 2029</p>
+        </div>
+        <div class="payplan">
+          <div class="paycell"><div class="pct">10%</div><div class="lbl">1st Installment</div><div class="dt">On Booking</div></div>
+          <div class="paycell"><div class="pct">10%</div><div class="lbl">2nd Installment</div><div class="dt">01 Aug 2026</div></div>
+          <div class="paycell"><div class="pct">5%</div><div class="lbl">3rd Installment</div><div class="dt">01 May 2027</div></div>
+          <div class="paycell"><div class="pct">5%</div><div class="lbl">4th Installment</div><div class="dt">01 Sep 2027</div></div>
+          <div class="paycell"><div class="pct">5%</div><div class="lbl">5th Installment</div><div class="dt">01 May 2028</div></div>
+          <div class="paycell"><div class="pct">5%</div><div class="lbl">6th Installment</div><div class="dt">01 Sep 2028</div></div>
+          <div class="paycell is-final"><div class="pct">60%</div><div class="lbl">On Completion</div><div class="dt">Q1 2029</div></div>
+        </div>
+      </div>
+
+      <div class="pr__agent" style="padding: 0px; margin: 14px 0px 0px">
+        <img class="ph-photo" src="assets/agent-nauman.jpg" alt="Nauman Malik">
+        <div class="who">
+          <div class="lab">Exclusively Presented With</div>
+          <div class="nm">Nauman Malik</div>
+        </div>
+        <div class="sep" style="padding: 21px 0px 22px; height: 94px"></div>
+        <div class="mt">+971 56 786 4920 &nbsp;|&nbsp; +971 56 237 7998<br><a href="/cdn-cgi/l/email-protection#244a455149454a0a4945484d4f6445484841434d454a47410a4541"><span class="__cf_email__" data-cfemail="8ae4ebffe7ebe4a4e7ebe6e3e1caebe6e6efede3ebe4e9efa4ebef">[email&#160;protected]</span></a></div>
+      </div>
+    </div>
+
+    <div class="brandfoot">
+      <img src="assets/allegiance-green.png" alt="Allegiance Real Estate">
+      <div class="cities">Dubai · Sydney · Riyadh · Paris · Beirut · Tokyo · Ljubljana</div>
+    </div>
+  </section>
+
+</div>
+
+<script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
+  if (window.lucide) lucide.createIcons();
+  function fit(){
+    var avail = document.documentElement.clientWidth - 0;
+    var s = Math.min(1, (avail-40)/1123);
+    document.querySelectorAll('.sheet').forEach(function(el){
+      el.style.transform = 'scale('+s+')';
+      el.style.marginBottom = (s<1 ? (794*s-794)+26 : 0) + 'px';
+    });
+  }
+  window.addEventListener('resize', fit); fit();
+</script>
+</body>
+</html>

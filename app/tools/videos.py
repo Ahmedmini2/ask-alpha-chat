@@ -4,17 +4,24 @@ from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 import boto3
+from botocore.exceptions import ClientError
 from sqlalchemy import select, insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.core.profiles import get_profile, is_agent
 from app.db.models import Project, Video
-from app.integrations import heygen
+from app.integrations import bedrock_images, heygen
 from app.tools.registry import Tool, registry
 
 log = logging.getLogger("askalpha.videos")
 
 _bedrock = boto3.client("bedrock-runtime", region_name=settings.aws_region)
+# gpt-oss (OpenAI on Bedrock) for script writing may live in a different region than the
+# main reasoning model; keep a dedicated client so the two are independently configurable.
+_script_bedrock = boto3.client(
+    "bedrock-runtime",
+    region_name=settings.bedrock_script_region or settings.aws_region,
+)
 
 
 CAMPAIGN_SCRIPT_SYSTEM_PROMPT = """You write short spoken-style UAE real-estate Reel/TikTok promo scripts \
@@ -79,6 +86,17 @@ def _campaign_brief(project: Project) -> str:
                 facts.append(f"Amenities: {', '.join(names)}")
     if project.units_count:
         facts.append(f"Total units: {project.units_count}")
+    if project.units:
+        beds = sorted({float(u.bedrooms) for u in project.units if u.bedrooms is not None})
+        if beds:
+            def _bed(n: float) -> str:
+                return "studio" if n == 0 else (str(int(n)) if n == int(n) else str(n))
+            rng = _bed(beds[0]) if beds[0] == beds[-1] else f"{_bed(beds[0])}–{_bed(beds[-1])}"
+            facts.append(f"Bedrooms: {rng}")
+    if project.furnishing:
+        facts.append(f"Furnishing: {project.furnishing}")
+    if project.service_charge:
+        facts.append(f"Service charge: {project.service_charge}")
     if project.min_price and project.currency:
         facts.append(f"Starting price: {project.currency} {project.min_price:,.0f}")
     if project.completion_quarter:
@@ -94,95 +112,90 @@ def _campaign_brief(project: Project) -> str:
     return "\n".join(f"- {f}" for f in facts)
 
 
+def _extract_text(resp: dict) -> str:
+    """Pull the answer text out of a Converse response. gpt-oss is a reasoning model,
+    so message.content may hold a `reasoningContent` block alongside the `text` block —
+    concatenate only the text blocks and skip the chain-of-thought."""
+    blocks = (resp.get("output", {}).get("message", {}) or {}).get("content", []) or []
+    return "".join(b["text"] for b in blocks if isinstance(b, dict) and "text" in b).strip()
+
+
 async def _write_campaign_script(project: Project) -> str:
     brief = _campaign_brief(project)
+    messages = [{
+        "role": "user",
+        "content": [{"text":
+            "Write the spoken script from this brief. Only use facts present below; "
+            "omit anything missing. Output the narration as one continuous paragraph "
+            "with no labels.\n\n" + brief
+        }],
+    }]
+    effort = (settings.bedrock_script_reasoning_effort or "").strip().lower()
 
     def _call() -> str:
-        resp = _bedrock.converse(
-            modelId=settings.bedrock_model_id,
+        kwargs = dict(
+            modelId=settings.bedrock_script_model_id,
             system=[{"text": CAMPAIGN_SCRIPT_SYSTEM_PROMPT}],
-            messages=[{
-                "role": "user",
-                "content": [{"text":
-                    "Write the spoken script from this brief. Only use facts present below; "
-                    "omit anything missing. Output the narration as one continuous paragraph "
-                    "with no labels.\n\n" + brief
-                }],
-            }],
-            inferenceConfig={"maxTokens": 600, "temperature": 0.6},
+            messages=messages,
+            # gpt-oss spends tokens on reasoning BEFORE the answer, so give generous
+            # headroom beyond the ~180-word script. Temperature/topP are accepted on Bedrock.
+            inferenceConfig={"maxTokens": 4096, "temperature": 0.7, "topP": 0.9},
         )
-        for block in resp["output"]["message"]["content"]:
-            if "text" in block:
-                return block["text"].strip()
-        return ""
+
+        def _run(extra: dict) -> str:
+            resp = _script_bedrock.converse(**kwargs, **extra)
+            text = _extract_text(resp)
+            if not text and resp.get("stopReason") == "max_tokens":
+                log.warning(
+                    "gpt-oss script hit maxTokens with no answer text (reasoning starvation) model=%s",
+                    settings.bedrock_script_model_id,
+                )
+            return text
+
+        if effort:
+            try:
+                text = _run({"additionalModelRequestFields": {"reasoning_effort": effort}})
+                if text:
+                    return text
+                # Succeeded but produced only reasoning (no answer) — retry without the
+                # effort hint, which gives the answer the full token budget.
+                log.warning("empty script with reasoning_effort=%s; retrying without it", effort)
+            except ClientError as e:
+                # Some models/regions reject reasoning_effort — retry without it rather
+                # than fail the whole video.
+                if "ValidationException" not in str(e) and "reasoning" not in str(e).lower():
+                    raise
+                log.warning("reasoning_effort rejected by %s; retrying plain", settings.bedrock_script_model_id)
+        return _run({})
 
     return await asyncio.to_thread(_call)
 
 
-def _project_facts(project: Project) -> str:
-    facts: list[str] = [f"- Name: {project.name}"]
-    if project.developer and project.developer.name:
-        facts.append(f"- Developer: {project.developer.name}")
-    loc = " ".join(p for p in (project.city, project.region, project.country) if p).strip()
-    if loc:
-        facts.append(f"- Location: {loc}")
-    if project.short_description:
-        facts.append(f"- Tagline: {project.short_description}")
-    if project.description:
-        facts.append(f"- About: {project.description[:600]}")
-    if project.min_price and project.max_price and project.currency:
-        facts.append(f"- Price range: {project.currency} {project.min_price:,.0f}–{project.max_price:,.0f}")
-    if project.completion_quarter:
-        facts.append(f"- Completion: {project.completion_quarter}")
-    if project.sale_status:
-        facts.append(f"- Sale status: {project.sale_status}")
-    return "\n".join(facts)
+def _compose_background_prompt(project: Project, user_prompt: str) -> str:
+    """Build the text-to-image prompt for the 9:16 background plate that HeyGen composites
+    the avatar in front of. Describe the SCENE ONLY — no people — and always append a
+    cinematic style suffix. The avatar stands in the foreground, so we keep it clear.
 
-
-def _build_agent_prompt(project: Project, explicit_script: str, background_prompt: str) -> str:
-    """Compose the natural-language prompt sent to HeyGen's Video Agent (/v3/video-agents).
-    HeyGen handles script writing (if no explicit_script) AND scene/background generation."""
-    parts: list[str] = []
-
-    parts.append(
-        "Create a short vertical (9:16) real-estate promo video, native for "
-        "Instagram Reels / TikTok. The avatar should present naturally and "
-        "professionally, with confident posture and natural delivery."
+    When the agent gave a background description we lead with it; otherwise we fall back to
+    a generic premium setting tied to the project's location.
+    """
+    user_prompt = " ".join((user_prompt or "").split())  # also normalises NBSP from data
+    bits: list[str] = []
+    if user_prompt:
+        bits.append(user_prompt)
+    else:
+        # .split() on each part normalises NBSP (a known district data gotcha) and drops Nones
+        loc = " ".join((project.district or "").split() + (project.city or "").split())
+        where = f"in {loc}" if loc else "in Dubai"
+        bits.append(
+            f"A modern, premium real-estate setting {where} suiting the {project.name} "
+            "development — contemporary architecture, manicured landscaping, elegant amenity spaces"
+        )
+    bits.append(
+        "photorealistic, cinematic, shallow depth of field, golden-hour lighting, "
+        "vertical 9:16 composition, no people, clear foreground for a presenter"
     )
-    parts.append("\nPROJECT DETAILS:\n" + _project_facts(project))
-
-    if explicit_script:
-        parts.append(
-            "\nSCRIPT (read verbatim, do not change wording):\n" + explicit_script
-        )
-    else:
-        parts.append(
-            "\nSCRIPT GUIDELINES:\n"
-            "- Write a 60–90 word first-person narration.\n"
-            "- Conversational, professional, calm. No slogans, no markdown.\n"
-            "- Mention project name, developer, city, and 2–3 standout details.\n"
-            "- At most one price or timeline figure.\n"
-            "- End with a soft call to action like \"Reach out for full details.\""
-        )
-
-    if background_prompt:
-        parts.append(
-            "\nSCENE / BACKGROUND:\n"
-            f"{background_prompt}\n"
-            "Photorealistic, cinematic, depth of field. The avatar should be "
-            "naturally composited in the foreground of this scene."
-        )
-    else:
-        parts.append(
-            "\nSCENE / BACKGROUND:\n"
-            "A modern, premium Dubai real-estate setting that fits the project — "
-            "an architectural showroom, sleek office, or scenic skyline view. "
-            "Photorealistic, cinematic, depth of field."
-        )
-
-    parts.append("\nDELIVERY:\n- Vertical 9:16. Burn-in subtitles. Resolution 1080p.")
-
-    return "\n".join(parts)
+    return ", ".join(bits)[:1400]  # Stability core prompt budget
 
 
 def _agent_full_name(profile) -> str:
@@ -278,41 +291,51 @@ async def create_promo_video_handler(db: AsyncSession, args: dict, ctx: dict) ->
         if not explicit_script:
             return {"error": "Failed to write a campaign script. Try again or provide one."}
 
-    agent_prompt = _build_agent_prompt(project, explicit_script, background_prompt)
+    # Build the background plate HeyGen composites the avatar in front of: ALWAYS an
+    # AI-generated 9:16 image (purpose-built — no people, clear foreground), uploaded to
+    # HeyGen's own asset store so HeyGen can always fetch it. We deliberately do NOT fall
+    # back to project.cover_image_url — that's a Reelly-origin URL (forbidden as a fetch
+    # source, and prone to 403/expiry on HeyGen's server-side fetch). On any failure we
+    # drop the override and keep the avatar's default scene rather than fail the whole job.
+    # This is the REAL background swap; the old Video-Agent path took the scene as free
+    # text and silently ignored it, which is why the background never changed.
+    background_url: Optional[str] = None
+    background_source = "avatar default scene"
+    scene_prompt = _compose_background_prompt(project, background_prompt)
+    try:
+        png = await bedrock_images.generate_background_png(scene_prompt, aspect_ratio="9:16")
+        background_url = await heygen.upload_asset(png, content_type="image/png")
+        background_source = (
+            f"AI image: {background_prompt[:80]}" if background_prompt
+            else "AI image (generic project scene)"
+        )
+    except (bedrock_images.ImageGenError, heygen.HeyGenError) as e:
+        log.warning("background gen/upload failed (%s); using avatar default scene", e)
+        background_source = "avatar default scene (bg gen failed)"
 
     try:
-        session_id, heygen_video_id = await heygen.generate_video_via_agent(
-            prompt=agent_prompt,
+        heygen_video_id = await heygen.generate_video(
+            script=explicit_script,
             avatar_id=avatar["avatar_id"],
             voice_id=voice["voice_id"],
-            orientation="portrait",
+            background_url=background_url,
+            resolution="1080p",
+            aspect_ratio="9:16",
+            # Emit a CLEAN video — our Remotion post-step (app/captioning) burns the
+            # captions with controlled, title-safe placement. Letting HeyGen also burn
+            # its own (un-positionable) captions would double them on every success and
+            # is exactly the off-screen-text problem we're fixing.
+            caption=False,
         )
     except heygen.HeyGenError as e:
-        log.error("HeyGen video-agent failed: %s", e)
+        log.error("HeyGen video generation failed: %s", e)
         return {"error": f"Video service error: {e}"}
 
-    if not heygen_video_id and session_id:
-        # Some sessions assign video_id a beat later; poll briefly.
-        for _ in range(6):
-            await asyncio.sleep(2)
-            try:
-                sess = await heygen.get_agent_session(session_id)
-            except heygen.HeyGenError:
-                continue
-            heygen_video_id = sess.get("video_id")
-            if heygen_video_id:
-                break
     if not heygen_video_id:
-        return {"error": "HeyGen did not return a video_id (session_id: %s)." % session_id}
-
-    script_for_log = explicit_script or "(written by HeyGen agent from prompt)"
-    background_source = (
-        f"agent-generated scene: {background_prompt[:80]}"
-        if background_prompt else "agent-generated scene"
-    )
+        return {"error": "HeyGen did not return a video_id."}
 
     now = datetime.now(timezone.utc)
-    stored_script = explicit_script or agent_prompt[:4000]
+    stored_script = explicit_script
     tg_chat_id = ctx.get("telegram_chat_id")
     result = await db.execute(
         insert(Video).values(
@@ -330,8 +353,8 @@ async def create_promo_video_handler(db: AsyncSession, args: dict, ctx: dict) ->
     await db.commit()
 
     log.info(
-        "video job started id=%s heygen=%s session=%s project=%s by=%s for=%s avatar=%s voice=%s bg=%s tg=%s",
-        video_id, heygen_video_id, session_id, project.id, user_id, name_used,
+        "video job started id=%s heygen=%s project=%s by=%s for=%s avatar=%s voice=%s bg=%s tg=%s",
+        video_id, heygen_video_id, project.id, user_id, name_used,
         avatar.get("avatar_id"), voice.get("voice_id"), background_source, tg_chat_id,
     )
     return {
@@ -347,8 +370,9 @@ async def create_promo_video_handler(db: AsyncSession, args: dict, ctx: dict) ->
         "background": background_source,
         "format": "1080x1920 vertical (Reels/TikTok)",
         "message": (
-            "Video generation started. Typical wait is 1–2 minutes. "
-            + ("You'll get a Telegram message with the download link the moment it's ready."
+            "Video generation started. After HeyGen renders, we burn on Hormozi-style "
+            "captions, so total wait is typically 2–3 minutes. "
+            + ("You'll get a Telegram message with the captioned video + download link the moment it's ready."
                if tg_chat_id else "Ask \"is my video ready?\" to check.")
         ),
     }
@@ -360,7 +384,8 @@ registry.register(Tool(
         "Generate a short AI-avatar promotional video about a project via HeyGen. "
         "Only available to agents (logged-in profiles with role=salesagent or admin "
         "AND ask_alpha_access in (read, write)). The tool returns a video_id and "
-        "starts the job asynchronously — it typically takes 1–2 minutes to render. "
+        "starts the job asynchronously — HeyGen renders it and then Hormozi-style captions "
+        "are burned on, so it typically takes 2–3 minutes to be ready. "
         "Use this when an agent asks to create a marketing video, promo video, or AI "
         "video about a specific project. If the user only describes the project by name, "
         "first call search_projects to get the numeric project_id."
@@ -392,8 +417,9 @@ registry.register(Tool(
                     "behind the avatar — e.g. 'Burj Khalifa visible through a floor-to-ceiling glass "
                     "window with the Dubai skyline at golden hour', 'sleek modern marble lobby with "
                     "indoor plants', 'Palm Jumeirah aerial view at dusk'. The server generates a vertical "
-                    "9:16 image via Bedrock and uses it as the avatar's backdrop. If omitted, the "
-                    "project's cover photo is used."
+                    "9:16 image via Bedrock and uses it as the avatar's backdrop. If omitted, a generic "
+                    "project-tailored scene is generated; if image generation fails, the avatar's "
+                    "default scene is kept."
                 ),
             },
         },
@@ -433,10 +459,13 @@ async def check_my_video_status_handler(db: AsyncSession, args: dict, ctx: dict)
     if v.project_id is not None:
         p = (await db.execute(select(Project.name).where(Project.id == v.project_id))).scalar_one_or_none()
         project_name = p
+    # Prefer the captioned cut once it's ready; fall back to the raw HeyGen video.
     return {
         "video_id": str(v.id),
         "status": v.status,
-        "video_url": v.video_url,
+        "caption_status": v.caption_status,
+        "video_url": v.captioned_video_url or v.video_url,
+        "captioned_video_url": v.captioned_video_url,
         "thumbnail_url": v.thumbnail_url,
         "project_id": v.project_id,
         "project_name": project_name,

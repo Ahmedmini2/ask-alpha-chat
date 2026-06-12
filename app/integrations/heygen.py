@@ -98,7 +98,11 @@ async def generate_video(
     if background_url:
         base_payload["background"] = {"type": "image", "url": background_url}
     if caption:
-        base_payload["caption"] = {"enabled": True}
+        # v3 burns captions in when a caption object with a `style` is present — there is
+        # NO `caption.enabled` flag. file_format/style are the only sub-fields the API
+        # accepts (no position/font/size control). A sidecar SRT is always returned at
+        # response.subtitle_url regardless.
+        base_payload["caption"] = {"file_format": "srt", "style": "default"}
 
     # Try the requested engine first; on engine-related rejection, fall back.
     engines_to_try = [engine, "avatar_iv", None]
@@ -155,9 +159,10 @@ async def generate_video_via_agent(
     voice_id: Optional[str] = None,
     orientation: str = "portrait",
 ) -> tuple[str, Optional[str]]:
-    """Call HeyGen's AI Studio (Video Agent) with a natural-language prompt that
-    describes the script AND the scene/background. HeyGen does its own background
-    generation and avatar compositing — no separate image upload required.
+    """DEPRECATED — not used by create_promo_video. The Video Agent does NOT reliably
+    honour a free-text scene/background description (it renders the avatar on its default
+    scene), which is why backgrounds never changed. Use generate_video() with a real
+    background image asset instead. Kept only as a thin wrapper for ad-hoc experiments.
 
     Returns (session_id, video_id). video_id may be None on first response for
     multi-turn modes; in `generate` mode it should arrive immediately.

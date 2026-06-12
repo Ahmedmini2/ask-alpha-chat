@@ -16,3 +16,9 @@ docs/
 README.md
 tests/
 .claude/
+# Node deps are installed fresh inside the image (platform-specific binaries);
+# never copy a local node_modules in.
+node_modules/
+**/node_modules/
+remotion/out/
+remotion/.remotion/

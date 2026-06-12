@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Green Community East, DIP — Sales Offer | Allegiance Real Estate</title>
+<link rel="stylesheet" href="colors_and_type.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js"></script>
+<style>
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;background:#ffffff;}
+body{font-family:var(--sans);-webkit-font-smoothing:antialiased;}
+
+#stage{ display:flex; flex-direction:column; align-items:center; gap:0; padding:0; }
+.sheet{
+  width:1123px; height:794px; background:var(--paper);
+  position:relative; overflow:hidden; flex:none; transform-origin:top center;
+}
+
+/* ---------- shared header (pages 2–6) ---------- */
+.pghead{ display:flex; align-items:flex-start; justify-content:space-between; gap:48px; }
+.pg-title{ font-family:var(--serif-display); font-weight:400; font-size:33px; line-height:1.0; letter-spacing:.05em; text-transform:uppercase; color:var(--ink); margin:0; }
+.pg-intro{ max-width:430px; font-family:var(--sans); font-weight:400; font-size:12.5px; line-height:1.55; color:var(--slate); text-align:right; padding-top:4px; }
+.pg-sub{ font-family:var(--sans); font-weight:400; font-size:12.5px; line-height:1.55; color:var(--slate); margin:14px 0 0; max-width:760px; }
+
+/* ---------- shared footer ---------- */
+.foot{ margin-top:auto; padding-top:20px; display:flex; flex-direction:column; align-items:center; gap:12px; text-align:center; }
+.foot img{ height:42px; width:auto; display:block; }
+.cities{ font-family:var(--sans); font-weight:400; font-size:9.5px; letter-spacing:.24em; text-transform:uppercase; color:var(--slate-soft); }
+.cities span{ margin:0 6px; }
+.cities .dot{ color:var(--gold); margin:0 1px; }
+
+/* ============ PAGE 1 — INVESTMENT SUMMARY (COVER) ============ */
+.cover{ padding:48px 56px 36px; display:flex; flex-direction:column; height:794px; }
+.cover__head{ margin-bottom:20px; }
+.cover__eyebrow{ display:flex; align-items:center; gap:14px; margin-bottom:13px; }
+.cover__eyebrow .tag{ font-family:var(--sans); font-weight:600; font-size:9.5px; letter-spacing:.2em; text-transform:uppercase; color:var(--gold-deep); }
+.cover__eyebrow .ref{ font-family:var(--sans); font-weight:400; font-size:9.5px; letter-spacing:.16em; text-transform:uppercase; color:var(--slate-soft); }
+.cover__eyebrow .bar{ flex:1; height:1px; background:var(--hairline); }
+.cover__title{ font-family:var(--serif-display); font-weight:400; font-size:40px; line-height:1.04; letter-spacing:.02em; color:var(--ink); text-transform:uppercase; margin:0; }
+.cover__loc{ font-family:var(--sans); font-weight:400; font-size:13px; letter-spacing:.06em; color:var(--slate); margin-top:11px; }
+.cover__loc .sep{ color:var(--gold-deep); margin:0 7px; }
+.cover__body{ display:grid; grid-template-columns:1fr 372px; gap:44px; flex:1; min-height:0; }
+.hero{ position:relative; border-radius:2px; overflow:hidden; height:100%; background:#e9e7e0; }
+.hero img{ width:100%; height:100%; object-fit:cover; object-position:50% 55%; display:block; }
+.hero__fade{ position:absolute; left:0; right:0; bottom:0; height:40%; z-index:1; pointer-events:none; background:linear-gradient(to top, rgba(0,0,0,.6) 0%, rgba(0,0,0,.22) 42%, rgba(0,0,0,0) 100%); }
+.hero__caption{ position:absolute; left:24px; right:24px; bottom:22px; z-index:2; color:#fff; text-shadow:0 1px 12px rgba(0,0,0,.5); }
+.hero__caption .hc-title{ font-family:var(--serif-display); font-weight:400; font-size:24px; line-height:1.08; letter-spacing:.02em; }
+.hero__emblem{ position:absolute; left:24px; top:22px; z-index:2; color:#fff; text-shadow:0 1px 14px rgba(0,0,0,.5); }
+.emblem-arc{ font-family:var(--sans); font-weight:500; font-size:8.5px; letter-spacing:.3em; text-transform:uppercase; opacity:.92; }
+.panel{ display:flex; flex-direction:column; padding-top:2px; }
+.cover-invest{ width:100%; }
+.cover-invest .invest-kicker{ font-family:var(--sans); font-weight:600; font-size:9px; letter-spacing:.2em; text-transform:uppercase; color:var(--gold-deep); margin-bottom:8px; }
+.cover-invest .invest-sub{ font-family:var(--serif-display); font-weight:400; font-size:25px; line-height:1.04; color:var(--ink); margin:0 0 12px; letter-spacing:.01em; }
+.cover-invest .itable{ display:flex; flex-direction:column; }
+.cover-invest .irow{ display:flex; align-items:baseline; justify-content:space-between; gap:12px; padding:7.5px 2px; border-top:1px solid var(--hairline); }
+.cover-invest .itable .irow:last-child{ border-bottom:1px solid var(--hairline); }
+.cover-invest .ikey{ font-family:var(--sans); font-weight:400; font-size:11px; color:var(--slate); letter-spacing:.005em; white-space:nowrap; }
+.cover-invest .ival{ font-family:var(--sans); font-weight:600; font-size:11.5px; color:var(--ink); text-align:right; white-space:nowrap; letter-spacing:.005em; }
+.cover-invest .ival.accent{ color:var(--pine); }
+.cover-invest .ival.warn{ color:var(--gold-deep); }
+.cover-logo{ margin-top:auto; padding-top:18px; }
+.cover-logo img{ height:87px; width:auto; display:block; }
+
+/* ============ PAGE 2 — THE LOCATION ============ */
+.locpage{ padding:50px 56px 30px; display:flex; flex-direction:column; height:794px; }
+.drive-grid{ display:grid; grid-template-columns:repeat(4,1fr); gap:0 30px; margin-top:24px; }
+.drive{ display:flex; align-items:baseline; justify-content:space-between; gap:12px; padding:11px 2px; border-top:1px solid var(--hairline); }
+.drive__n{ font-family:var(--sans); font-weight:400; font-size:12px; color:var(--ink); letter-spacing:.005em; }
+.drive__t{ white-space:nowrap; }
+.drive__t b{ font-family:var(--sans); font-weight:700; font-size:16px; color:var(--pine); }
+.drive__t span{ font-family:var(--sans); font-weight:500; font-size:8px; letter-spacing:.16em; text-transform:uppercase; color:var(--slate-soft); margin-left:4px; }
+.drive-note{ font-family:var(--sans); font-weight:400; font-size:10px; font-style:italic; color:var(--slate-soft); margin:14px 0 0; }
+.map-frame{ position:relative; flex:1; min-height:0; margin-top:18px; border:1px solid var(--hairline); border-radius:2px; overflow:hidden; }
+#map{ position:absolute; inset:0; background:#eef1f3; }
+.leaflet-container{ font-family:var(--sans); background:#eef1f3; }
+.map-chip{ position:absolute; top:14px; left:14px; z-index:500; background:#fff; border:1px solid var(--hairline); border-radius:2px; padding:9px 13px; box-shadow:0 2px 8px rgba(0,0,0,.08); }
+.map-chip .c1{ font-family:var(--sans); font-weight:600; font-size:9px; letter-spacing:.14em; text-transform:uppercase; color:var(--ink); }
+.map-chip .c2{ font-family:var(--sans); font-weight:500; font-size:9px; letter-spacing:.06em; color:var(--gold-deep); margin-top:4px; }
+.pin-prop{ width:18px; height:18px; border-radius:50%; background:#9CCB3B; border:3px solid #fff; box-shadow:0 0 0 1px rgba(0,0,0,.15),0 2px 6px rgba(0,0,0,.3); }
+
+/* ============ PAGE 3 — INSIDE & OUTSIDE ============ */
+.inside{ padding:50px 56px 30px; display:flex; flex-direction:column; height:794px; }
+.gal3{ display:grid; grid-template-columns:1.18fr 1fr 1fr; grid-template-rows:1fr 1fr; gap:9px; margin-top:24px; flex:1; min-height:0; }
+.gcell{ position:relative; overflow:hidden; border-radius:1px; background:#e9e7e0; }
+.gcell.tall{ grid-row:1 / span 2; }
+.gcell img{ width:100%; height:100%; object-fit:cover; display:block; }
+.gcell::after{ content:""; position:absolute; left:0; right:0; bottom:0; height:42%; background:linear-gradient(to top,rgba(0,0,0,.5),rgba(0,0,0,0)); z-index:1; }
+.gcap{ position:absolute; left:0; bottom:0; z-index:2; padding:9px 14px; white-space:nowrap; font-family:var(--sans); font-weight:500; font-size:9px; letter-spacing:.16em; text-transform:uppercase; color:#fff; text-shadow:0 1px 6px rgba(0,0,0,.6); }
+.featrow{ display:grid; grid-template-columns:repeat(5,1fr); margin-top:18px; }
+.feat{ display:flex; align-items:center; justify-content:center; gap:9px; padding:4px 10px; position:relative; }
+.feat:not(:first-child)::before{ content:""; position:absolute; left:0; top:14%; bottom:14%; width:1px; background:var(--hairline); }
+.feat span[data-lucide]{ width:18px; height:18px; color:var(--gold-deep); }
+.feat .ft{ font-family:var(--sans); font-weight:500; font-size:11px; letter-spacing:.02em; color:var(--ink); }
+
+/* ============ PAGE 4 — FLOOR PLANS ============ */
+.fplans{ padding:50px 56px 30px; display:flex; flex-direction:column; height:794px; }
+.plan-area{ flex:1; min-height:0; display:flex; flex-direction:column; gap:22px; margin-top:24px; }
+.plan-top{ display:grid; grid-template-columns:1fr 1fr; gap:34px; flex:1.05; min-height:0; }
+.plan-bottom{ flex:1; min-height:0; display:flex; justify-content:center; }
+.plan-bottom .plan-cell{ max-width:560px; width:100%; }
+.plan-cell{ display:flex; flex-direction:column; }
+.plan-box{ flex:1; min-height:0; border:1px solid var(--hairline); background:var(--paper-warm); border-radius:2px; display:flex; align-items:center; justify-content:center; overflow:hidden; }
+.plan-empty{ display:flex; flex-direction:column; align-items:center; gap:11px; color:var(--slate-soft); }
+.plan-empty svg{ width:34px; height:34px; stroke-width:1; }
+.plan-empty span{ font-size:9.5px; letter-spacing:.1em; text-transform:uppercase; text-align:center; line-height:1.6; }
+.plan-meta{ display:flex; align-items:baseline; justify-content:space-between; gap:16px; margin-top:13px; }
+.plan-meta .pm-l{ display:flex; align-items:baseline; gap:10px; }
+.plan-meta .pm-name{ font-family:var(--serif-display); font-weight:400; font-size:19px; color:var(--ink); letter-spacing:.01em; }
+.plan-meta .pm-type{ font-family:var(--sans); font-weight:500; font-size:8.5px; letter-spacing:.13em; text-transform:uppercase; color:var(--gold-deep); }
+.plan-meta .pm-areas{ font-family:var(--sans); font-weight:400; font-size:11px; color:var(--slate); }
+.plan-meta .pm-areas b{ font-weight:600; color:var(--ink); margin-left:3px; }
+.plan-meta .pm-areas .gap{ margin-left:14px; }
+
+/* ============ PAGE 5 — AMENITIES ============ */
+.amenpage{ padding:50px 56px 30px; display:flex; flex-direction:column; height:794px; }
+.amen-grid{ display:grid; grid-template-columns:1fr 1fr; gap:46px; flex:1; min-height:0; margin-top:20px; }
+.amen-col{ display:flex; flex-direction:column; min-height:0; }
+.amen-colhead{ display:flex; align-items:baseline; justify-content:space-between; gap:14px; margin-bottom:13px; }
+.amen-colhead h3{ font-family:var(--serif-display); font-weight:400; font-size:21px; color:var(--ink); margin:0; letter-spacing:.01em; }
+.amen-colhead .ah-sub{ font-family:var(--sans); font-weight:500; font-size:8px; letter-spacing:.13em; text-transform:uppercase; color:var(--gold-deep); }
+.amen-imgs{ display:grid; grid-template-columns:1fr 1fr; grid-template-rows:1.5fr 1fr; gap:8px; flex:1; min-height:0; }
+.amen-imgs .ai{ position:relative; overflow:hidden; border-radius:1px; background:#e9e7e0; }
+.amen-imgs .ai.wide{ grid-column:1 / span 2; }
+.amen-imgs .ai img{ width:100%; height:100%; object-fit:cover; display:block; }
+.amen-imgs .ai.plate{ background:var(--paper-warm); border:1px solid var(--hairline); display:flex; align-items:center; justify-content:center; }
+.amen-imgs .ai.plate span{ font-family:var(--sans); font-weight:500; font-size:8px; letter-spacing:.12em; text-transform:uppercase; color:var(--slate-soft); }
+.amen-imgs .ai::after{ content:""; position:absolute; left:0; right:0; bottom:0; height:50%; background:linear-gradient(to top,rgba(0,0,0,.45),rgba(0,0,0,0)); }
+.amen-imgs .ai.plate::after{ display:none; }
+.aicap{ position:absolute; left:0; bottom:0; z-index:2; padding:7px 11px; font-family:var(--sans); font-weight:500; font-size:8px; letter-spacing:.14em; text-transform:uppercase; color:#fff; text-shadow:0 1px 5px rgba(0,0,0,.6); }
+.amen-list{ list-style:none; flex:none; margin:14px 0 0; padding:0; columns:2; column-gap:24px; }
+.amen-list li{ font-family:var(--sans); font-weight:400; font-size:12px; color:var(--ink); padding:7px 0 7px 16px; position:relative; border-top:1px solid var(--hairline); break-inside:avoid; }
+.amen-list li::before{ content:""; position:absolute; left:0; top:14px; width:6px; height:6px; border-radius:50%; background:var(--gold); }
+
+/* ============ PAGE 6 — PRICING & OFFER ============ */
+.pricepage{ padding:50px 56px 30px; display:flex; flex-direction:column; height:794px; }
+.ptable{ margin-top:22px; }
+.ptable-head, .ptable-row{ display:grid; grid-template-columns:1.6fr 1fr 1.6fr 1fr; gap:18px; align-items:center; }
+.ptable-head{ padding:0 4px 10px; }
+.ptable-head span{ font-family:var(--sans); font-weight:600; font-size:8.5px; letter-spacing:.16em; text-transform:uppercase; color:var(--slate-soft); }
+.ptable-head span:last-child, .ptable-row .pr-price{ text-align:right; }
+.ptable-row{ padding:16px 4px; border-top:1px solid var(--hairline); }
+.ptable-row:last-child{ border-bottom:1px solid var(--hairline); }
+.pr-res{ display:flex; flex-direction:column; gap:5px; }
+.pr-res .prr-name{ font-family:var(--serif-display); font-weight:400; font-size:19px; color:var(--ink); letter-spacing:.01em; }
+.pr-res .prr-cfg{ font-family:var(--sans); font-weight:600; font-size:8.5px; letter-spacing:.13em; text-transform:uppercase; color:var(--gold-deep); }
+.pr-size{ font-family:var(--sans); font-weight:600; font-size:14px; color:var(--ink); }
+.pr-size span{ font-weight:400; font-size:11px; color:var(--slate); }
+.pr-cfg{ font-family:var(--sans); font-weight:400; font-size:12px; color:var(--slate); }
+.pr-price{ font-family:var(--sans); font-weight:700; font-size:18px; color:var(--pine); }
+
+.pp-head{ display:flex; align-items:baseline; gap:18px; margin:30px 0 14px; }
+.pp-head .kick{ font-family:var(--sans); font-weight:600; font-size:9.5px; letter-spacing:.2em; text-transform:uppercase; color:var(--gold-deep); }
+.pp-head .kick .slash{ margin-right:.4em; }
+.pp-head .pp-desc{ font-family:var(--sans); font-weight:400; font-size:11.5px; color:var(--slate); }
+.pp-head .pp-desc b{ color:var(--pine); font-weight:600; }
+.tiles{ display:grid; grid-template-columns:repeat(7,1fr); }
+.tile{ display:flex; flex-direction:column; gap:6px; padding:14px 12px; border-top:1px solid var(--hairline); position:relative; }
+.tile:not(:first-child)::before{ content:""; position:absolute; left:0; top:22%; bottom:22%; width:1px; background:var(--hairline); }
+.tile__v{ font-family:var(--sans); font-weight:700; font-size:17px; line-height:1; color:var(--pine); }
+.tile__v.warn{ color:var(--gold-deep); }
+.tile__k{ font-family:var(--sans); font-weight:500; font-size:7.5px; letter-spacing:.12em; text-transform:uppercase; color:var(--slate-soft); line-height:1.4; }
+.tile__d{ font-family:var(--sans); font-weight:400; font-size:8.5px; letter-spacing:.04em; color:var(--slate); }
+
+.agent-block{ margin-top:30px; display:flex; align-items:center; gap:24px; }
+.agent-mono{ width:74px; height:90px; flex:none; background:var(--pine); border-radius:1px; display:flex; align-items:center; justify-content:center; position:relative; }
+.agent-mono span{ font-family:var(--serif-display); font-weight:400; font-size:30px; letter-spacing:.04em; color:var(--gold); }
+.agent-mono::after{ content:""; position:absolute; left:11px; right:11px; bottom:11px; height:1px; background:rgba(201,176,129,.5); }
+.agent-info .a-eyebrow{ font-family:var(--sans); font-weight:500; font-size:8.5px; letter-spacing:.18em; text-transform:uppercase; color:var(--slate-soft); margin-bottom:8px; }
+.agent-info .a-name{ font-family:var(--serif-display); font-weight:400; font-size:25px; color:var(--ink); letter-spacing:.01em; line-height:1; }
+.agent-info .a-meta{ font-family:var(--sans); font-weight:400; font-size:12px; color:var(--slate); margin-top:9px; line-height:1.55; }
+.agent-info .a-meta a{ color:var(--slate); text-decoration:none; }
+
+/* print */
+@media print{
+  @page{ size:A4 landscape; margin:0; }
+  html,body{ background:#fff; }
+  #stage{ gap:0; padding:0; }
+  .sheet{ box-shadow:none; transform:none!important; page-break-after:always; break-after:page; }
+  .sheet:last-child{ page-break-after:auto; }
+}
+</style>
+</head>
+<body>
+<template id="__bundler_thumbnail">
+  <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+    <rect width="100" height="100" fill="#07342C"/>
+    <text x="50" y="46" font-family="Georgia, serif" font-size="30" fill="#fff" text-anchor="middle" dominant-baseline="central" letter-spacing="2">A</text>
+    <text x="50" y="74" font-family="Helvetica, sans-serif" font-size="5.4" fill="#C9B081" text-anchor="middle" letter-spacing="2">GREEN COMMUNITY</text>
+  </svg>
+</template>
+<div id="stage">
+
+  <!-- ============ PAGE 1 — INVESTMENT SUMMARY (COVER) ============ -->
+  <section class="sheet cover" data-screen-label="01 · Investment Summary">
+    <div class="cover__head">
+      <div class="cover__eyebrow">
+        <span class="tag">For Sale · Motivated Seller · Exclusive</span>
+        <span class="bar"></span>
+        <span class="ref">Ref · AGR-S-3992</span>
+      </div>
+      <h1 class="cover__title">GREEN COMMUNITY EAST, DUBAI INVESTMENT PARK.</h1>
+      <div class="cover__loc">
+</div>
+    </div>
+
+    <div class="cover__body">
+      <div class="hero">
+        <img src="assets/img/corner-facade.png" alt="Corner townhouse exterior">
+        <div class="hero__fade"></div>
+        <div class="hero__caption"><div class="hc-title">3 Bedroom Corner Townhouse</div></div>
+      </div>
+
+      <aside class="panel">
+        <div class="cover-invest">
+          <div class="invest-kicker">
+</div>
+          <h2 class="invest-sub">Numbers at a Glance</h2>
+          <div class="itable">
+            <div class="irow"><span class="ikey">Entry price</span><span class="ival accent">AED 5.1M</span></div>
+            <div class="irow"><span class="ikey">Price / sqft</span><span class="ival">AED 1,214</span></div>
+            <div class="irow"><span class="ikey">Cheaper than area average</span><span class="ival accent">−47.2%</span></div>
+            <div class="irow"><span class="ikey">Net yield</span><span class="ival warn">4.7%</span></div>
+            <div class="irow"><span class="ikey">Area average rent return</span><span class="ival">6.2%</span></div>
+            <div class="irow"><span class="ikey">Annual appreciation</span><span class="ival accent">+7.2%</span></div>
+            <div class="irow"><span class="ikey">Y5 projected value</span><span class="ival">AED 7.22M</span></div>
+            <div class="irow"><span class="ikey">Service charge / sqft</span><span class="ival">AED 18</span></div>
+            <div class="irow"><span class="ikey">Golden Visa eligible</span><span class="ival accent">Yes&nbsp;(≥ AED 2M)</span></div>
+            <div class="irow"><span class="ikey">Days on market</span><span class="ival">240</span></div>
+            <div class="irow"><span class="ikey">Time to sell in area</span><span class="ival">90 days</span></div>
+            <div class="irow"><span class="ikey">Handover</span><span class="ival accent">Ready · vacant Aug 2026</span></div>
+          </div>
+        </div>
+        <div class="cover-logo"><img src="assets/allegiance-green.png" alt="Allegiance Real Estate"></div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ============ PAGE 2 — THE LOCATION ============ -->
+  <section class="sheet locpage" data-screen-label="02 · The Location">
+    <div class="pghead">
+      <h2 class="pg-title">The Location</h2>
+      <p class="pg-intro">An established, family-scaled enclave in Dubai Investment Park — tree-lined, low-density and green, minutes from schools, retail and the city's road network.</p>
+    </div>
+    <p class="pg-sub">Woven with parks, jogging paths, a community market and play areas, everyday needs stay close to home — while Downtown, the malls and both airports remain a short drive away.</p>
+
+    <div class="drive-grid">
+      <div class="drive"><span class="drive__n">Green Community Market</span><span class="drive__t"><b>4</b><span>min</span></span></div>
+      <div class="drive"><span class="drive__n">Ibn Battuta Mall</span><span class="drive__t"><b>12</b><span>min</span></span></div>
+      <div class="drive"><span class="drive__n">Expo City Dubai</span><span class="drive__t"><b>14</b><span>min</span></span></div>
+      <div class="drive"><span class="drive__n">Al Maktoum Airport (DWC)</span><span class="drive__t"><b>18</b><span>min</span></span></div>
+      <div class="drive"><span class="drive__n">Mall of the Emirates</span><span class="drive__t"><b>22</b><span>min</span></span></div>
+      <div class="drive"><span class="drive__n">Palm Jumeirah</span><span class="drive__t"><b>26</b><span>min</span></span></div>
+      <div class="drive"><span class="drive__n">Downtown Dubai</span><span class="drive__t"><b>28</b><span>min</span></span></div>
+      <div class="drive"><span class="drive__n">Dubai Int'l Airport (DXB)</span><span class="drive__t"><b>30</b><span>min</span></span></div>
+    </div>
+    <p class="drive-note">Drive times indicative, via Sheikh Mohammed Bin Zayed Road (E311).</p>
+
+    <div class="map-frame">
+      <div id="map"></div>
+      <div class="map-chip">
+        <div class="c1">Green Community East</div>
+        <div class="c2">Dubai Investment Park, Dubai</div>
+      </div>
+    </div>
+
+    <div class="foot">
+      <img src="assets/allegiance-green.png" alt="Allegiance Real Estate">
+      <div class="cities"><span>Dubai</span><span class="dot">·</span><span>Sydney</span><span class="dot">·</span><span>Riyadh</span><span class="dot">·</span><span>Paris</span><span class="dot">·</span><span>Beirut</span><span class="dot">·</span><span>Tokyo</span><span class="dot">·</span><span>Ljubljana</span></div>
+    </div>
+  </section>
+
+  <!-- ============ PAGE 3 — INSIDE & OUTSIDE ============ -->
+  <section class="sheet inside" data-screen-label="03 · Inside & Outside">
+    <div class="pghead">
+      <h2 class="pg-title">INSIDE AND OUTSIDE</h2>
+      <p class="pg-intro">Bright, family-scaled interiors with built-in wardrobes and a fully fitted kitchen, opening to a private landscaped garden on a generous corner plot.</p>
+    </div>
+
+    <div class="gal3">
+      <div class="gcell tall"><img src="https://static.shared.propertyfinder.ae/media/images/listing/01KCR0TVQ3J7S9B1XCXJ098HCD/f00a1319-46bd-4897-9ad0-efa6003518a5/original.jpg" alt="Living &amp; dining"><span class="gcap">Living &amp; Dining</span></div>
+      <div class="gcell"><img src="https://static.shared.propertyfinder.ae/media/images/listing/01KCR0TVQ3J7S9B1XCXJ098HCD/c0218afe-402e-4372-b32e-c440fc0cec33/original.jpg" alt="Kitchen"><span class="gcap">Kitchen</span></div>
+      <div class="gcell"><img src="https://static.shared.propertyfinder.ae/media/images/listing/01KCR0TVQ3J7S9B1XCXJ098HCD/5d4df87c-a3ae-4df1-bf65-2fe30fe9050f/original.jpg" alt="Bedroom"><span class="gcap">Bedroom</span></div>
+      <div class="gcell"><img src="https://static.shared.propertyfinder.ae/media/images/listing/01KCR0TVQ3J7S9B1XCXJ098HCD/03d4ba29-a096-4ec0-852e-5f1acb930367/original.jpg" alt="Garden &amp; terrace"><span class="gcap">Garden &amp; Terrace</span></div>
+      <div class="gcell"><img src="https://static.shared.propertyfinder.ae/media/images/listing/01KCR0TVQ3J7S9B1XCXJ098HCD/dc3a7216-fc73-41c6-bd16-6e014f0da742/original.jpg" alt="Exterior"><span class="gcap">Corner Facade</span></div>
+    </div>
+
+    <div class="featrow">
+      <div class="feat"><span data-lucide="land-plot"></span><span class="ft">Corner Plot</span></div>
+      <div class="feat"><span data-lucide="trees"></span><span class="ft">Private Garden</span></div>
+      <div class="feat"><span data-lucide="warehouse"></span><span class="ft">Built-in Wardrobes</span></div>
+      <div class="feat"><span data-lucide="utensils"></span><span class="ft">Fitted Kitchen</span></div>
+      <div class="feat"><span data-lucide="car"></span><span class="ft">Covered Parking</span></div>
+    </div>
+
+    <div class="foot">
+      <img src="assets/allegiance-green.png" alt="Allegiance Real Estate">
+      <div class="cities"><span>Dubai</span><span class="dot">·</span><span>Sydney</span><span class="dot">·</span><span>Riyadh</span><span class="dot">·</span><span>Paris</span><span class="dot">·</span><span>Beirut</span><span class="dot">·</span><span>Tokyo</span><span class="dot">·</span><span>Ljubljana</span></div>
+    </div>
+  </section>
+
+  <!-- ============ PAGE 4 — FLOOR PLANS ============ -->
+  <section class="sheet fplans" data-screen-label="04 · Floor Plans">
+    <div class="pghead">
+      <h2 class="pg-title">Floor Plans</h2>
+      <p class="pg-intro">A two-storey corner townhouse with a roof terrace — 4,200 sqft of built-up area across generous, light-filled levels. Drawings supplied on request.</p>
+    </div>
+
+    <div class="plan-area">
+      <div class="plan-top">
+        <div class="plan-cell">
+          <div class="plan-box"><div class="plan-empty"><span data-lucide="square-dashed-bottom"></span><span>Ground floor plan<br>to be supplied</span></div></div>
+          <div class="plan-meta">
+            <div class="pm-l"><span class="pm-name">Ground Floor</span><span class="pm-type">Level 01</span></div>
+            <div class="pm-areas">Internal<b>1,720</b><span class="gap">Terrace</span><b>360</b><span class="gap">Total</span><b>2,080 sqft</b></div>
+          </div>
+        </div>
+        <div class="plan-cell">
+          <div class="plan-box"><div class="plan-empty"><span data-lucide="square-dashed-bottom"></span><span>First floor plan<br>to be supplied</span></div></div>
+          <div class="plan-meta">
+            <div class="pm-l"><span class="pm-name">First Floor</span><span class="pm-type">Level 02</span></div>
+            <div class="pm-areas">Internal<b>1,470</b><span class="gap">Balcony</span><b>150</b><span class="gap">Total</span><b>1,620 sqft</b></div>
+          </div>
+        </div>
+      </div>
+      <div class="plan-bottom">
+        <div class="plan-cell">
+          <div class="plan-box"><div class="plan-empty"><span data-lucide="square-dashed-bottom"></span><span>Roof terrace plan<br>to be supplied</span></div></div>
+          <div class="plan-meta">
+            <div class="pm-l"><span class="pm-name">Roof Terrace</span><span class="pm-type">Level 03</span></div>
+            <div class="pm-areas">Open Terrace<b>500</b><span class="gap">Built-up Area</span><b>4,200 sqft</b></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="foot">
+      <img src="assets/allegiance-green.png" alt="Allegiance Real Estate">
+      <div class="cities"><span>Dubai</span><span class="dot">·</span><span>Sydney</span><span class="dot">·</span><span>Riyadh</span><span class="dot">·</span><span>Paris</span><span class="dot">·</span><span>Beirut</span><span class="dot">·</span><span>Tokyo</span><span class="dot">·</span><span>Ljubljana</span></div>
+    </div>
+  </section>
+
+  <!-- ============ PAGE 5 — AMENITIES ============ -->
+  <section class="sheet amenpage" data-screen-label="05 · Amenities">
+    <div class="pghead">
+      <h2 class="pg-title">Amenities</h2>
+    </div>
+
+    <div class="amen-grid">
+      <div class="amen-col">
+        <div class="amen-colhead"><h3>Outdoor Amenities</h3></div>
+        <div class="amen-imgs">
+          <div class="ai wide"><img src="assets/img/outdoor-gardens.png" alt="Landscaped gardens"><span class="aicap">Landscaped Gardens</span></div>
+          <div class="ai"><img src="assets/img/corner-facade.png" alt="Corner facade"><span class="aicap">Corner Facade</span></div>
+          <div class="ai"><img src="assets/img/garden-terrace.png" alt="Garden terrace"><span class="aicap">Garden Terrace</span></div>
+        </div>
+        <ul class="amen-list">
+          <li>Lush landscaped gardens</li>
+          <li>Walking &amp; jogging paths</li>
+          <li>Community parks &amp; open spaces</li>
+          <li>Children's play areas</li>
+          <li>Barbecue areas</li>
+          <li>24-hour security</li>
+        </ul>
+      </div>
+      <div class="amen-col">
+        <div class="amen-colhead"><h3>Indoor Amenities</h3></div>
+        <div class="amen-imgs">
+          <div class="ai wide"><img src="https://static.shared.propertyfinder.ae/media/images/listing/01KCR0TVQ3J7S9B1XCXJ098HCD/f00a1319-46bd-4897-9ad0-efa6003518a5/original.jpg" alt="Open-plan living"><span class="aicap">Open-Plan Living</span></div>
+          <div class="ai"><img src="assets/img/kitchen.png" alt="Fitted kitchen"><span class="aicap">Fitted Kitchen</span></div>
+          <div class="ai"><img src="assets/img/bedroom.png" alt="Bedrooms"><span class="aicap">Bedrooms</span></div>
+        </div>
+        <ul class="amen-list">
+          <li>Central air-conditioning</li>
+          <li>Built-in wardrobes</li>
+          <li>Fully fitted kitchen</li>
+          <li>Kitchen appliances</li>
+          <li>Private balcony</li>
+          <li>Covered parking</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="foot">
+      <img src="assets/allegiance-green.png" alt="Allegiance Real Estate">
+      <div class="cities"><span>Dubai</span><span class="dot">·</span><span>Sydney</span><span class="dot">·</span><span>Riyadh</span><span class="dot">·</span><span>Paris</span><span class="dot">·</span><span>Beirut</span><span class="dot">·</span><span>Tokyo</span><span class="dot">·</span><span>Ljubljana</span></div>
+    </div>
+  </section>
+
+  <!-- ============ PAGE 6 — PRICING & OFFER ============ -->
+  <section class="sheet pricepage" data-screen-label="06 · Pricing & Offer">
+    <div class="pghead">
+      <h2 class="pg-title">PRICING</h2>
+      <p class="pg-intro">Offered exclusively at AED 5.1M — a tenanted corner townhouse priced 47.2% below the community average, with clear negotiation room.</p>
+    </div>
+
+    <div class="ptable">
+      <div class="ptable-head">
+        <span>Residence</span><span>Built-up Area</span><span>Configuration</span><span>Price</span>
+      </div>
+      <div class="ptable-row">
+        <div class="pr-res"><span class="prr-name">Corner Townhouse</span><span class="prr-cfg">3 BR · Green Community East</span></div>
+        <div class="pr-size">4,200 <span>sqft</span></div>
+        <div class="pr-cfg">Corner plot · private garden · tenanted to Jul 2026</div>
+        <div class="pr-price">AED 5.1M</div>
+      </div>
+    </div>
+
+    <div class="pp-head">
+      <span class="kick"><span class="slash">//</span>Price Intelligence</span>
+      <span class="pp-desc">Seller has reduced asking <b>7.2%</b> across 240 days on market — community average is 90 days. Negotiation room sits above market.</span>
+    </div>
+    <div class="tiles">
+      <div class="tile"><div class="tile__v">AED 5.50M</div><div class="tile__k">Listed</div><div class="tile__d">Oct 2025</div></div>
+      <div class="tile"><div class="tile__v warn">AED 5.25M</div><div class="tile__k">Reduced · −4.6%</div><div class="tile__d">Mar 2026</div></div>
+      <div class="tile"><div class="tile__v warn">AED 5.10M</div><div class="tile__k">Reduced · −2.9%</div><div class="tile__d">Jun 2026</div></div>
+      <div class="tile"><div class="tile__v">−7.2%</div><div class="tile__k">Total Drop</div><div class="tile__d">Since listing</div></div>
+      <div class="tile"><div class="tile__v">240</div><div class="tile__k">Days on Market</div><div class="tile__d">Days</div></div>
+      <div class="tile"><div class="tile__v">90</div><div class="tile__k">Community Avg DOM</div><div class="tile__d">Days</div></div>
+      <div class="tile"><div class="tile__v">Strong</div><div class="tile__k">Negotiation Room</div><div class="tile__d">Signal</div></div>
+    </div>
+
+    <div class="agent-block">
+      <div class="agent-mono"><span>AA</span></div>
+      <div class="agent-info">
+        <div class="a-eyebrow">Exclusively Presented With</div>
+        <div class="a-name">Amr Aboushaban</div>
+        <div class="a-meta">Listing Agent · Allegiance<br>+971 56 728 5888 &nbsp;·&nbsp; <a href="/cdn-cgi/l/email-protection#85e8e4f7eee0f1ecebe2c5e4e9e9e0e2ece4ebe6e0abe4e0"><span class="__cf_email__" data-cfemail="1c717d6e77796875727b5c7d7070797b757d727f79327d79">[email&#160;protected]</span></a></div>
+      </div>
+    </div>
+
+    <div class="foot">
+      <img src="assets/allegiance-green.png" alt="Allegiance Real Estate">
+      <div class="cities"><span>Dubai</span><span class="dot">·</span><span>Sydney</span><span class="dot">·</span><span>Riyadh</span><span class="dot">·</span><span>Paris</span><span class="dot">·</span><span>Beirut</span><span class="dot">·</span><span>Tokyo</span><span class="dot">·</span><span>Ljubljana</span></div>
+    </div>
+  </section>
+
+</div>
+
+<script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
+  if (window.lucide) lucide.createIcons();
+
+  /* ---------- Page 2 — Leaflet map ---------- */
+  var map;
+  (function(){
+    var PROP = [25.005378, 55.160577]; // Green Community East, DIP
+    map = L.map('map', { zoomControl:false, attributionControl:true, scrollWheelZoom:false })
+           .setView(PROP, 13);
+    L.control.zoom({ position:'topright' }).addTo(map);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+      maxZoom: 19, attribution: '&copy; OpenStreetMap &copy; CARTO'
+    }).addTo(map);
+    L.marker(PROP, { icon: L.divIcon({ className:'', html:'<div class="pin-prop"></div>', iconSize:[18,18], iconAnchor:[9,9] }) })
+      .addTo(map).bindTooltip('Corner Unit · Green Community East', { direction:'top', offset:[0,-8] });
+
+    var POI = [
+      ['Greenfield International School',[25.0085,55.1638]],
+      ['The Market, Green Community',[25.0064,55.1622]],
+      ['Mediclinic Parkview Hospital',[25.0335,55.1820]],
+      ['Sheikh Zayed Rd (E311)',[25.0218,55.1462]],
+      ['Ibn Battuta Mall',[25.0445,55.1182]],
+      ['Expo City Dubai',[24.9650,55.1510]]
+    ];
+    POI.forEach(function(p){
+      L.circleMarker(p[1], { radius:5, color:'#fff', weight:2, fillColor:'#07342C', fillOpacity:1 })
+        .bindTooltip(p[0], { direction:'top', offset:[0,-4] }).addTo(map);
+    });
+    var all = [PROP].concat(POI.map(function(p){return p[1];}));
+    map.fitBounds(all, { padding:[40,40] });
+  })();
+
+  function fit(){
+    var w = document.documentElement.clientWidth || window.innerWidth || 1123;
+    var avail = w - 48; if (avail < 320) avail = 320;
+    var s = Math.min(1, avail/1123);
+    document.querySelectorAll('.sheet').forEach(function(el){
+      el.style.transform = 'scale('+s+')';
+      el.style.marginBottom = (s<1 ? (794*s-794) : 0) + 'px';
+    });
+    if (map) setTimeout(function(){ map.invalidateSize(); }, 60);
+  }
+  window.addEventListener('resize', fit);
+  window.addEventListener('load', fit);
+  fit();
+</script>
+</body>
+</html>

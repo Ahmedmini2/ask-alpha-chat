@@ -1,0 +1,406 @@
+/* =========================================================
+   Allegiance Real Estate — Global Investment Advisory
+   Colors & Type tokens
+   ========================================================= */
+
+/* -------------- Fonts -------------- */
+@font-face {
+  font-family: "Playfair Display";
+  font-style: normal;
+  font-weight: 400;
+  src: url("fonts/PlayfairDisplay-Regular.ttf") format("truetype");
+  font-display: swap;
+}
+@font-face {
+  font-family: "Playfair Display";
+  font-style: normal;
+  font-weight: 500;
+  src: url("fonts/PlayfairDisplay-Medium.ttf") format("truetype");
+  font-display: swap;
+}
+@font-face {
+  font-family: "Playfair Display";
+  font-style: normal;
+  font-weight: 600;
+  src: url("fonts/PlayfairDisplay-SemiBold.ttf") format("truetype");
+  font-display: swap;
+}
+@font-face {
+  font-family: "Playfair Display";
+  font-style: normal;
+  font-weight: 700;
+  src: url("fonts/PlayfairDisplay-Bold.ttf") format("truetype");
+  font-display: swap;
+}
+@font-face {
+  font-family: "Playfair Display";
+  font-style: normal;
+  font-weight: 900;
+  src: url("fonts/PlayfairDisplay-Black.ttf") format("truetype");
+  font-display: swap;
+}
+@font-face {
+  font-family: "Playfair Display";
+  font-style: italic;
+  font-weight: 400;
+  src: url("fonts/PlayfairDisplay-Italic.ttf") format("truetype");
+  font-display: swap;
+}
+@font-face {
+  font-family: "Playfair Display";
+  font-style: italic;
+  font-weight: 700;
+  src: url("fonts/PlayfairDisplay-BoldItalic.ttf") format("truetype");
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Google Sans Flex";
+  font-style: normal;
+  font-weight: 300;
+  src: url("fonts/GoogleSansFlex-Light.ttf") format("truetype");
+  font-display: swap;
+}
+@font-face {
+  font-family: "Google Sans Flex";
+  font-style: normal;
+  font-weight: 400;
+  src: url("fonts/GoogleSansFlex-Regular.ttf") format("truetype");
+  font-display: swap;
+}
+@font-face {
+  font-family: "Google Sans Flex";
+  font-style: normal;
+  font-weight: 500;
+  src: url("fonts/GoogleSansFlex-Medium.ttf") format("truetype");
+  font-display: swap;
+}
+@font-face {
+  font-family: "Google Sans Flex";
+  font-style: normal;
+  font-weight: 600;
+  src: url("fonts/GoogleSansFlex-SemiBold.ttf") format("truetype");
+  font-display: swap;
+}
+@font-face {
+  font-family: "Google Sans Flex";
+  font-style: normal;
+  font-weight: 700;
+  src: url("fonts/GoogleSansFlex-Bold.ttf") format("truetype");
+  font-display: swap;
+}
+
+:root {
+  /* -------------- Core palette -------------- */
+  /* Brand spec: Dark Green 06342C · Gold C1A777 · Grey 6D6E71 */
+  --allegiance-green: #06342C;      /* Primary brand */
+  --allegiance-gold:  #C1A777;      /* Accent / metallic */
+  --allegiance-grey:  #6D6E71;      /* Supporting neutral */
+
+  /* Green scale (derived from 06342C, extended for UI use) */
+  --green-950: #02100E;   /* near-black, deepest shadow */
+  --green-900: #041E1A;
+  --green-800: #06342C;   /* = brand green */
+  --green-700: #0A4A3F;
+  --green-600: #0F6152;
+  --green-500: #1A7A69;
+  --green-400: #3E9A87;
+  --green-300: #74B8A8;
+  --green-200: #B0D5CB;
+  --green-100: #DBEAE5;
+  --green-50:  #F1F6F4;
+
+  /* Gold scale (derived from C1A777) */
+  --gold-900: #5E4F35;
+  --gold-800: #7A6847;
+  --gold-700: #968059;
+  --gold-600: #AB926A;
+  --gold-500: #C1A777;    /* = brand gold */
+  --gold-400: #CEB98F;
+  --gold-300: #DBCBA9;
+  --gold-200: #E8DCC3;
+  --gold-100: #F3ECDC;
+  --gold-50:  #FAF6EE;
+
+  /* Grey scale (from 6D6E71) */
+  --grey-900: #1C1C1D;
+  --grey-800: #2E2F30;
+  --grey-700: #4A4B4D;
+  --grey-600: #6D6E71;    /* = brand grey */
+  --grey-500: #8A8B8E;
+  --grey-400: #A8A9AC;
+  --grey-300: #C6C7C9;
+  --grey-200: #E1E1E3;
+  --grey-100: #EEEEEF;
+  --grey-50:  #F7F7F8;
+
+  /* Paper / surfaces */
+  --cream:         #F7F2E9;     /* warm off-white */
+  --ivory:         #FBF8F2;
+  --paper:         #FFFFFF;
+  --obsidian:      #0A0A0A;
+
+  /* Semantic colors — LIGHT mode */
+  --bg:            #FBF8F2;                 /* ivory paper */
+  --bg-elevated:   #FFFFFF;
+  --bg-muted:      var(--gold-50);
+  --bg-inverse:    var(--green-800);
+
+  --fg:            var(--green-800);        /* primary text on light */
+  --fg-muted:      var(--grey-700);
+  --fg-subtle:     var(--grey-600);
+  --fg-on-dark:    var(--cream);
+  --fg-on-gold:    var(--green-800);
+
+  --accent:        var(--gold-500);
+  --accent-hover:  var(--gold-600);
+  --accent-press:  var(--gold-700);
+
+  --primary:       var(--green-800);
+  --primary-hover: var(--green-700);
+  --primary-press: var(--green-900);
+
+  --border:        rgba(6, 52, 44, 0.12);
+  --border-strong: rgba(6, 52, 44, 0.28);
+  --border-gold:   rgba(193, 167, 119, 0.45);
+
+  --shadow-soft:   0 1px 2px rgba(6, 52, 44, 0.06), 0 4px 16px rgba(6, 52, 44, 0.06);
+  --shadow-card:   0 2px 4px rgba(6, 52, 44, 0.04), 0 12px 32px rgba(6, 52, 44, 0.10);
+  --shadow-lift:   0 8px 24px rgba(6, 52, 44, 0.12), 0 24px 56px rgba(6, 52, 44, 0.14);
+  --shadow-inset:  inset 0 0 0 1px rgba(193, 167, 119, 0.30);
+
+  /* Feedback */
+  --success: #2E8B5A;
+  --warning: #B8860B;
+  --danger:  #9A2A2A;
+  --info:    #2A5A7A;
+
+  /* -------------- Type families -------------- */
+  --font-serif:  "Playfair Display", "Cormorant Garamond", Georgia, "Times New Roman", serif;
+  --font-sans:   "Google Sans Flex", "Google Sans", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono:   "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* -------------- Type scale (fluid-ish, display-led) -------------- */
+  --text-2xs:  10px;
+  --text-xs:   12px;
+  --text-sm:   14px;
+  --text-base: 16px;
+  --text-md:   18px;
+  --text-lg:   20px;
+  --text-xl:   24px;
+  --text-2xl:  32px;
+  --text-3xl:  44px;
+  --text-4xl:  60px;
+  --text-5xl:  84px;
+  --text-6xl:  120px;
+
+  /* Line heights */
+  --lh-tight:   1.05;
+  --lh-snug:    1.2;
+  --lh-normal:  1.5;
+  --lh-relaxed: 1.65;
+
+  /* Tracking — generous letter-spacing for the gold eyebrow motif */
+  --track-tightest: -0.03em;
+  --track-tight:    -0.01em;
+  --track-normal:   0;
+  --track-wide:     0.08em;
+  --track-wider:    0.16em;   /* eyebrow / section labels */
+  --track-widest:   0.28em;   /* "REAL ESTATE" lockup */
+
+  /* -------------- Spacing (4px grid, generous) -------------- */
+  --space-0:   0;
+  --space-1:   4px;
+  --space-2:   8px;
+  --space-3:   12px;
+  --space-4:   16px;
+  --space-5:   20px;
+  --space-6:   24px;
+  --space-7:   32px;
+  --space-8:   40px;
+  --space-9:   56px;
+  --space-10:  72px;
+  --space-11:  96px;
+  --space-12:  128px;
+
+  /* -------------- Radii — restrained, print-paper feel -------------- */
+  --radius-none: 0;
+  --radius-xs:   2px;
+  --radius-sm:   4px;
+  --radius-md:   6px;
+  --radius-lg:   10px;
+  --radius-xl:   16px;
+  --radius-pill: 999px;
+
+  /* -------------- Motion -------------- */
+  --ease-out:   cubic-bezier(0.22, 0.61, 0.36, 1);
+  --ease-in:    cubic-bezier(0.55, 0.06, 0.68, 0.19);
+  --ease-inout: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-fast:   160ms;
+  --dur-base:   260ms;
+  --dur-slow:   480ms;
+
+  /* -------------- Brand gradients / effects -------------- */
+  --gradient-silk: radial-gradient(130% 90% at 30% 20%, #0a4a3f 0%, #06342c 38%, #03201b 100%);
+  --gradient-gold: linear-gradient(135deg, #E8DCC3 0%, #C1A777 50%, #8A7348 100%);
+  --gradient-gold-subtle: linear-gradient(180deg, #DBCBA9 0%, #C1A777 100%);
+  --hairline-gold: linear-gradient(90deg, transparent 0%, #C1A777 50%, transparent 100%);
+}
+
+/* -------------- Dark theme (on silk green) -------------- */
+[data-theme="dark"] {
+  --bg:           var(--green-900);
+  --bg-elevated:  var(--green-800);
+  --bg-muted:     var(--green-700);
+  --bg-inverse:   var(--cream);
+
+  --fg:           var(--cream);
+  --fg-muted:     var(--green-200);
+  --fg-subtle:    var(--green-300);
+  --fg-on-dark:   var(--cream);
+
+  --border:        rgba(193, 167, 119, 0.18);
+  --border-strong: rgba(193, 167, 119, 0.45);
+
+  --shadow-soft:   0 1px 2px rgba(0,0,0,0.4), 0 4px 16px rgba(0,0,0,0.35);
+  --shadow-card:   0 2px 4px rgba(0,0,0,0.3), 0 16px 36px rgba(0,0,0,0.45);
+  --shadow-lift:   0 8px 24px rgba(0,0,0,0.45), 0 24px 64px rgba(0,0,0,0.5);
+}
+
+/* =========================================================
+   Semantic type styles — use these as class or @apply equivalents
+   ========================================================= */
+
+.t-eyebrow {
+  font-family: var(--font-sans);
+  font-weight: 500;
+  font-size: var(--text-xs);
+  letter-spacing: var(--track-widest);
+  text-transform: uppercase;
+  color: var(--accent);
+  line-height: var(--lh-normal);
+}
+
+.t-display {
+  font-family: var(--font-serif);
+  font-weight: 400;           /* Playfair regular reads as display already */
+  font-size: var(--text-5xl);
+  line-height: var(--lh-tight);
+  letter-spacing: var(--track-tightest);
+  color: var(--fg);
+}
+.t-display-xl {
+  font-family: var(--font-serif);
+  font-weight: 400;
+  font-size: var(--text-6xl);
+  line-height: 0.98;
+  letter-spacing: var(--track-tightest);
+}
+
+.t-h1 {
+  font-family: var(--font-serif);
+  font-weight: 500;
+  font-size: var(--text-4xl);
+  line-height: var(--lh-tight);
+  letter-spacing: var(--track-tight);
+  color: var(--fg);
+}
+.t-h2 {
+  font-family: var(--font-serif);
+  font-weight: 500;
+  font-size: var(--text-3xl);
+  line-height: var(--lh-snug);
+  letter-spacing: var(--track-tight);
+  color: var(--fg);
+}
+.t-h3 {
+  font-family: var(--font-serif);
+  font-weight: 600;
+  font-size: var(--text-2xl);
+  line-height: var(--lh-snug);
+  color: var(--fg);
+}
+.t-h4 {
+  font-family: var(--font-sans);
+  font-weight: 600;
+  font-size: var(--text-xl);
+  line-height: var(--lh-snug);
+  letter-spacing: var(--track-tight);
+  color: var(--fg);
+}
+.t-h5 {
+  font-family: var(--font-sans);
+  font-weight: 600;
+  font-size: var(--text-md);
+  line-height: var(--lh-snug);
+  color: var(--fg);
+}
+
+.t-body-lg {
+  font-family: var(--font-sans);
+  font-weight: 400;
+  font-size: var(--text-md);
+  line-height: var(--lh-relaxed);
+  color: var(--fg-muted);
+}
+.t-body {
+  font-family: var(--font-sans);
+  font-weight: 400;
+  font-size: var(--text-base);
+  line-height: var(--lh-relaxed);
+  color: var(--fg-muted);
+}
+.t-body-sm {
+  font-family: var(--font-sans);
+  font-weight: 400;
+  font-size: var(--text-sm);
+  line-height: var(--lh-normal);
+  color: var(--fg-muted);
+}
+
+.t-caption {
+  font-family: var(--font-sans);
+  font-weight: 400;
+  font-size: var(--text-xs);
+  line-height: var(--lh-normal);
+  color: var(--fg-subtle);
+  letter-spacing: 0.01em;
+}
+.t-label {
+  font-family: var(--font-sans);
+  font-weight: 500;
+  font-size: var(--text-xs);
+  letter-spacing: var(--track-wider);
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+.t-quote {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-weight: 400;
+  font-size: var(--text-2xl);
+  line-height: var(--lh-snug);
+  color: var(--fg);
+}
+.t-mono {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  letter-spacing: 0;
+  color: var(--fg-muted);
+}
+
+/* Gold foil effect used on hero titles / wordmarks */
+.t-gold-foil {
+  background: var(--gradient-gold);
+  -webkit-background-clip: text;
+          background-clip: text;
+  color: transparent;
+}
+
+/* Hairline divider — gold fade used across the brand */
+.rule-gold {
+  height: 1px;
+  background: var(--hairline-gold);
+  border: 0;
+  width: 100%;
+}

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import uuid
 import boto3
@@ -19,6 +20,8 @@ import app.tools.property_monitor_tools  # noqa: F401
 import app.tools.analysis    # noqa: F401
 import app.tools.documents   # noqa: F401
 import app.tools.videos      # noqa: F401
+import app.tools.brochures   # noqa: F401
+import app.tools.comparison  # noqa: F401
 
 log = logging.getLogger("askalpha.orchestrator")
 
@@ -114,9 +117,15 @@ offset=next_offset from the previous result.
 (e.g., "what about the second one?" refers to a project from your previous reply).
 - If the user asks for a "promo video", "marketing video", "AI video" or similar about a project, \
 use create_promo_video. The tool is restricted to agents and will return an error for anonymous \
-users — when that happens, tell the user they need to sign in as an agent. After a successful \
-call, tell the user the video is being generated and will be ready in 1–2 minutes; on Telegram \
-the bot will push the download link automatically when ready, so they don't need to ask again.
+users — when that happens, tell the user they need to sign in as an agent. Every promo video gets \
+Hormozi-style burned-in captions added automatically after HeyGen renders, so after a successful \
+call, tell the user the video is being generated and will be ready in ~2–3 minutes (render + \
+caption pass); on Telegram the bot will push the finished captioned video and download link \
+automatically when ready, so they don't need to ask again.
+- Do NOT write the narration yourself. Leave the `script` argument EMPTY so the tool writes it \
+in our house Hook/Value/CTA style (a dedicated copywriting model handles this). Only pass `script` \
+when the user dictates the exact wording they want read verbatim ("say exactly: ...", "use this \
+script: ..."). Otherwise omit it.
 - The user can dispatch videos on behalf of teammates. If they say "make a video for Rami about \
 project X", "for Sarah", "in Zain's voice", etc., pass `agent_name` to create_promo_video set \
 to that name. The tool resolves it to a HeyGen avatar+voice. If omitted, it uses the requester's \
@@ -134,8 +143,34 @@ lighting, photorealistic, depth of field"). Do NOT mention the avatar/person in 
 describe the scene only, since the avatar is composited in front of it.
 - If the agent asks "is my video ready?", "send me the link", "where's my video?", or any \
 follow-up about a previously-requested video, call check_my_video_status. If completed, share \
-the video_url verbatim so it can be downloaded or sent to clients. If still processing, tell \
-them to try again in a minute.
+the video_url verbatim (it's the captioned cut when ready) so it can be downloaded or sent to \
+clients. If status is "captioning" (or caption_status is "processing"), the video rendered and \
+we're burning the captions on now — tell them it'll be ready in under a minute. If still \
+processing, tell them to try again in a minute.
+- If the user asks for a "Branded PDF", "Mini PDF", "mini brochure", "project brochure/PDF" \
+or similar for a project, use generate_mini_brochure (agents only — anonymous users must sign \
+in). Resolve the project first (search_projects) and pass project_id. The call is synchronous \
+and takes up to a minute — after it returns, share the pdf_url so it can be downloaded; on \
+Telegram the PDF file is also pushed into the chat automatically, so say it has been sent. \
+Investment metrics we don't store (net yield, area rent return, appreciation, Y5 value, days \
+on market, time to sell) print as "—" unless the agent provides them: when the agent states \
+such numbers in the conversation ("use 6% yield", "appreciation is 7%"), pass them as the \
+matching override arguments. NEVER invent or estimate override values yourself — only pass \
+what the agent explicitly stated. If the result lists metrics_missing, briefly tell the agent \
+they can re-generate with those values filled by stating them in chat.
+- COMPARING PROJECTS — two paths:
+    * If an AGENT asks to compare 2–3 projects as a document/sheet/PDF, or says "comparison PDF", \
+"compare these side by side", "comparison sheet", "make me a comparison of X and Y", or just asks an \
+agent-style "compare X and Y" expecting a deliverable, use generate_comparison_pdf. Resolve each \
+project first (search_projects) and pass project_id for each. It builds a branded single-page \
+"Side by Side" sheet ranking price/sqft, type, bedrooms, area, rental yield and an Alpha Score \
+verdict. The call is synchronous (~20–40s); after it returns, share the pdf_url and, on Telegram, \
+say the PDF has been sent. Rental yield defaults to a market-typical ESTIMATE and the Alpha Score is \
+computed from real signals; annual appreciation and the 5-year value only appear when the agent \
+states an appreciation figure — when they do ("assume 7% appreciation", "X yields 6%"), pass it in \
+that project's per-property fields. NEVER invent yields, appreciation, or scores.
+    * For a quick in-chat numeric comparison without a document (or for non-agents), use \
+compare_projects instead, which returns the figures as data to summarise in your reply.
 """
 
 MAX_TOOL_ITERATIONS = 10  # higher than 5 to accommodate bulk video requests
@@ -241,6 +276,12 @@ def _summarize_tool_result(name: str, result: dict) -> str:
         return f"video_id={result.get('video_id')} status={result.get('status')}"
     if name == "check_my_video_status":
         return f"video_id={result.get('video_id')} status={result.get('status')} url?={bool(result.get('video_url'))}"
+    if name == "generate_mini_brochure":
+        return (f"project={result.get('project_id')} status={result.get('status')} "
+                f"telegram={result.get('sent_to_telegram')} url?={bool(result.get('pdf_url'))}")
+    if name == "generate_comparison_pdf":
+        return (f"projects={result.get('project_ids')} status={result.get('status')} "
+                f"telegram={result.get('sent_to_telegram')} url?={bool(result.get('pdf_url'))}")
     return repr(result)[:120]
 
 
@@ -308,12 +349,34 @@ def _build_cards(tool_calls: list[dict]) -> list[dict]:
                 "project_id": result.get("project_id"),
                 "project_name": result.get("project_name"),
             })
+        elif name == "generate_mini_brochure":
+            cards.append({
+                "type": "brochure",
+                "status": result.get("status"),
+                "project_id": result.get("project_id"),
+                "project_name": result.get("project_name"),
+                "pdf_url": result.get("pdf_url"),
+                "filename": result.get("filename"),
+                "sent_to_telegram": result.get("sent_to_telegram"),
+            })
+        elif name == "generate_comparison_pdf":
+            cards.append({
+                "type": "comparison_pdf",
+                "status": result.get("status"),
+                "project_names": result.get("project_names"),
+                "alpha_scores": result.get("alpha_scores"),
+                "pdf_url": result.get("pdf_url"),
+                "filename": result.get("filename"),
+                "sent_to_telegram": result.get("sent_to_telegram"),
+            })
         elif name == "check_my_video_status":
             cards.append({
                 "type": "video_status",
                 "video_id": result.get("video_id"),
                 "status": result.get("status"),
+                "caption_status": result.get("caption_status"),
                 "video_url": result.get("video_url"),
+                "captioned_video_url": result.get("captioned_video_url"),
                 "thumbnail_url": result.get("thumbnail_url"),
                 "project_id": result.get("project_id"),
                 "project_name": result.get("project_name"),
@@ -333,12 +396,17 @@ async def _run_tool_loop(db: AsyncSession, messages: list[dict], ctx: dict) -> t
     captured: list[dict] = []
 
     for _ in range(MAX_TOOL_ITERATIONS):
-        response = bedrock.converse(
-            modelId=settings.bedrock_model_id,
-            system=system_blocks,
-            messages=messages,
-            toolConfig=tool_config,
-            inferenceConfig={"maxTokens": 1500, "temperature": 0.2},
+        # boto3's converse is synchronous; calling it directly would block the whole
+        # event loop (starving other Telegram users / web requests) for the duration
+        # of each LLM turn. Offload to a thread so the loop stays responsive.
+        response = await asyncio.to_thread(
+            lambda: bedrock.converse(
+                modelId=settings.bedrock_model_id,
+                system=system_blocks,
+                messages=messages,
+                toolConfig=tool_config,
+                inferenceConfig={"maxTokens": 1500, "temperature": 0.2},
+            )
         )
         stop_reason = response["stopReason"]
         assistant_msg = response["output"]["message"]

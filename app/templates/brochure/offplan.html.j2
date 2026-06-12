@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<!-- Allegiance mini brochure (off-plan) — parameterized from the original
+     "Arancia Yards, Sales Offer" 6-sheet design. Rendered headless to PDF. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{ project.name }} — Mini Brochure | Allegiance Real Estate</title>
+<link rel="stylesheet" href="{{ static_dir }}/vendor/leaflet.css">
+<script src="{{ static_dir }}/vendor/leaflet.js"></script>
+<style>
+/* ---- Allegiance design tokens (from the brand design system) ---- */
+:root{
+  --pine:#06342C;
+  --gold:#C1A777;
+  --gold-deep:#8F7748;
+  --ink:#16191D;
+  --slate:#5A646E;
+  --slate-soft:#98A1AA;
+  --hairline:#E5E1D8;
+  --hairline-soft:#EFECE4;
+  --paper:#FFFFFF;
+  --paper-warm:#FAF7F0;
+  --accent:{{ accent | default('#8F7748') }};
+  --serif-display:"Vanitas","Marcellus",Georgia,serif;
+  --serif-alt:"Playfair Display",Georgia,serif;
+  --sans:"Google Sans Flex",system-ui,Arial,sans-serif;
+}
+{% if vanitas_font %}
+@font-face{ font-family:"Vanitas"; src:url("{{ static_dir }}/fonts/{{ vanitas_font }}"); font-weight:400; font-display:block; }
+{% endif %}
+@font-face{ font-family:"Marcellus"; src:url("{{ static_dir }}/fonts/Marcellus-Regular.ttf"); font-weight:400; font-display:block; }
+@font-face{ font-family:"Google Sans Flex"; src:url("{{ static_dir }}/fonts/GoogleSansFlex-Regular.ttf"); font-weight:400; font-display:block; }
+@font-face{ font-family:"Google Sans Flex"; src:url("{{ static_dir }}/fonts/GoogleSansFlex-Medium.ttf"); font-weight:500; font-display:block; }
+@font-face{ font-family:"Google Sans Flex"; src:url("{{ static_dir }}/fonts/GoogleSansFlex-SemiBold.ttf"); font-weight:600; font-display:block; }
+@font-face{ font-family:"Google Sans Flex"; src:url("{{ static_dir }}/fonts/GoogleSansFlex-Bold.ttf"); font-weight:700; font-display:block; }
+@font-face{ font-family:"Playfair Display"; src:url("{{ static_dir }}/fonts/PlayfairDisplay-Italic.ttf"); font-weight:400; font-style:italic; font-display:block; }
+@font-face{ font-family:"Playfair Display"; src:url("{{ static_dir }}/fonts/PlayfairDisplay-MediumItalic.ttf"); font-weight:500; font-style:italic; font-display:block; }
+
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;background:#fff;}
+body{font-family:var(--sans);-webkit-font-smoothing:antialiased;}
+
+#stage{ display:flex; flex-direction:column; }
+.sheet{
+  width:1123px; height:794px; background:var(--paper);
+  position:relative; overflow:hidden; flex:none;
+}
+
+/* shared bits */
+.eyebrow{ font-family:var(--sans); font-weight:600; font-size:10px; letter-spacing:.32em; text-transform:uppercase; color:var(--accent); }
+.brandfoot{ display:flex; flex-direction:column; align-items:center; gap:8px; }
+.brandfoot img{ height:51px; width:auto; display:block; }
+.brandfoot .cities{ font-family:var(--sans); font-weight:500; font-size:9px; letter-spacing:.24em; text-transform:uppercase; color:var(--slate-soft); white-space:nowrap; }
+
+/* =================================================================
+   PAGE 1, COVER
+   ================================================================= */
+.cover{ display:grid; grid-template-columns:1fr 462px; }
+.cover__hero{ position:relative; overflow:hidden; }
+.cover__hero > img{ width:100%; height:100%; object-fit:cover; display:block; }
+.cover__hero::after{ content:""; position:absolute; inset:0; background:linear-gradient(0deg, rgba(6,52,44,.62) 0%, rgba(6,52,44,0) 42%), linear-gradient(105deg, rgba(6,52,44,.34) 0%, rgba(6,52,44,0) 46%); }
+.cover__photoband{ position:absolute; left:0; right:0; bottom:0; height:7px; z-index:2; background:var(--gold); opacity:.85; }
+.cover__title{ position:absolute; left:34px; right:30px; bottom:30px; z-index:2; color:#fff; }
+.cover__title .k{ font-family:var(--sans); font-weight:600; font-size:10px; letter-spacing:.28em; text-transform:uppercase; color:rgba(255,255,255,.85); margin-bottom:12px; }
+.cover__title .nm{ font-family:var(--serif-display); font-weight:400; font-size:54px; line-height:1.02; letter-spacing:.03em; text-transform:uppercase; text-shadow:0 3px 16px rgba(6,28,22,.45); margin:0 0 12px; }
+.cover__title .nm .by{ display:block; font-family:var(--serif-alt); font-style:italic; font-size:21px; text-transform:none; letter-spacing:.02em; color:var(--gold); margin-top:8px; }
+.cover__title .loc{ font-family:var(--sans); font-weight:500; font-size:10.5px; letter-spacing:.2em; text-transform:uppercase; color:rgba(255,255,255,.92); }
+
+.cover__pane{ padding:34px 38px 30px; display:flex; flex-direction:column; min-width:0; }
+.cover__numhead .e{ display:block; font-family:var(--sans); font-weight:600; font-size:9.5px; letter-spacing:.26em; text-transform:uppercase; color:var(--accent); margin-bottom:7px; }
+.cover__numhead .h{ font-family:var(--serif-display); font-weight:400; font-size:26px; letter-spacing:.02em; color:var(--pine); line-height:1; }
+
+.cnumlist{ min-height:0; display:flex; flex-direction:column; margin-top:10px; }
+.cnumrow{ display:flex; align-items:baseline; justify-content:space-between; gap:14px; padding:13px 2px; border-bottom:1px solid var(--hairline); }
+.cnumrow:first-child{ border-top:1px solid var(--hairline); }
+.cnumrow .k{ font-family:var(--sans); font-weight:500; font-size:11.5px; letter-spacing:.02em; color:var(--slate); line-height:1.2; white-space:nowrap; }
+.cnumrow .v{ font-family:var(--sans); font-weight:700; font-size:14.5px; color:var(--pine); line-height:1; letter-spacing:-.01em; white-space:nowrap; }
+.cnumrow .v .u{ font-weight:600; font-size:10.5px; color:var(--slate); }
+.cnumrow .v.warn{ color:var(--gold-deep); }
+.cnumrow .v.dim{ color:var(--slate-soft); font-weight:500; }
+
+.cover__panelogo{ flex:1; min-height:0; display:flex; align-items:center; justify-content:center; padding-top:10px; }
+.cover__panelogo img{ height:80px; width:auto; display:block; }
+
+/* =================================================================
+   PAGE TITLES (interior sheets)
+   ================================================================= */
+.page{ padding:44px 56px 30px; display:flex; flex-direction:column; }
+.page__head{ display:flex; align-items:flex-end; justify-content:space-between; gap:24px; margin-bottom:22px; }
+.page__head .ttl{ font-family:var(--serif-display); font-weight:400; font-size:31px; letter-spacing:.07em; text-transform:uppercase; color:var(--pine); line-height:1; white-space:nowrap; }
+.page__head .sub{ max-width:430px; text-align:right; font-size:11.5px; line-height:1.55; color:var(--slate); }
+
+/* =================================================================
+   PAGE 2, LOCATION
+   ================================================================= */
+.loc{ display:flex; flex-direction:column; gap:16px; flex:1; min-height:0; }
+.loc__lead{ font-size:12.5px; line-height:1.6; color:var(--ink); margin:0; max-width:760px; }
+.loc__grid{ display:grid; grid-template-columns:repeat(4,1fr); border-top:1px solid var(--hairline); border-left:1px solid var(--hairline); }
+.timecell{ border-right:1px solid var(--hairline); border-bottom:1px solid var(--hairline); padding:12px 16px; display:flex; align-items:baseline; justify-content:space-between; gap:12px; }
+.timecell .dest{ font-family:var(--sans); font-weight:500; font-size:12.5px; color:var(--ink); line-height:1.25; }
+.timecell .mins{ font-family:var(--sans); font-weight:600; font-size:13px; color:var(--pine); line-height:1.25; white-space:nowrap; }
+.timecell .mins small{ font-family:var(--sans); font-weight:500; font-size:9px; letter-spacing:.12em; text-transform:uppercase; color:var(--slate-soft); margin-left:3px; }
+.loc__note{ font-size:10px; color:var(--slate-soft); letter-spacing:.04em; margin:0; }
+.loc__map{ flex:1; min-height:0; border:1px solid var(--hairline); border-radius:2px; overflow:hidden; position:relative; }
+#map{ position:absolute; inset:0; background:#eef1f3; }
+.leaflet-container{ font-family:var(--sans); background:#eef1f3; }
+.loc__maptag{ position:absolute; left:0; top:0; z-index:500; background:var(--pine); color:#fff; font-family:var(--sans); font-weight:600; font-size:9.5px; letter-spacing:.18em; text-transform:uppercase; padding:7px 14px; white-space:nowrap; }
+.loc__map--empty{ display:flex; align-items:center; justify-content:center; background:var(--paper-warm); }
+.loc__placeholder{ font-family:var(--serif-display); font-size:20px; letter-spacing:.04em; color:var(--slate-soft); }
+.pin-prop{ width:18px; height:18px; border-radius:50%; background:var(--gold); border:3px solid #fff; box-shadow:0 0 0 1px rgba(0,0,0,.15),0 2px 6px rgba(0,0,0,.3); }
+
+/* =================================================================
+   PAGE 3, INSIDE AND OUTSIDE
+   ================================================================= */
+.gal{ flex:1; min-height:0; display:grid; grid-template-columns:2fr 1fr 1fr; grid-template-rows:1fr 1fr; gap:12px; }
+.gal figure{ margin:0; position:relative; overflow:hidden; border-radius:2px; background:#e9e7e0; }
+.gal figure img{ width:100%; height:100%; object-fit:cover; display:block; }
+.gal .big{ grid-row:1 / span 2; }
+.gal figcaption{ position:absolute; left:12px; bottom:11px; color:#fff; font-family:var(--sans); font-weight:600; font-size:9.5px; letter-spacing:.2em; text-transform:uppercase; text-shadow:0 1px 8px rgba(0,0,0,.6); }
+.galfeat{ display:flex; justify-content:center; gap:40px; margin-top:16px; padding-top:14px; border-top:1px solid var(--hairline); }
+.galfeat .ft{ display:flex; align-items:center; gap:9px; }
+.galfeat .ft svg{ width:18px; height:18px; stroke-width:1.4; color:var(--accent); }
+.galfeat .ft span.tx{ font-size:11px; color:var(--ink); line-height:1.3; }
+
+/* =================================================================
+   PAGE 4, FLOOR PLANS
+   ================================================================= */
+.plans{ flex:1; min-height:0; display:flex; flex-direction:column; gap:13px; }
+.plans__row{ display:grid; gap:13px; min-height:0; flex:1; }
+.plans__row--top{ grid-template-columns:1fr 1fr; }
+.plans__row--bot{ grid-template-columns:1fr; }
+.plans__row--bot .planc{ max-width:640px; width:100%; margin:0 auto; }
+.planc{ border:1px solid var(--hairline); border-radius:2px; overflow:hidden; background:#fff; display:flex; flex-direction:column; min-height:0; }
+.planc__img{ flex:1; min-height:0; display:flex; align-items:center; justify-content:center; padding:10px 12px; background:#fff; }
+.planc__img img{ max-width:100%; max-height:100%; object-fit:contain; display:block; }
+.planc__empty{ display:flex; flex-direction:column; align-items:center; gap:11px; color:var(--slate-soft); }
+.planc__empty svg{ width:34px; height:34px; stroke-width:1; }
+.planc__empty span{ font-size:9.5px; letter-spacing:.1em; text-transform:uppercase; text-align:center; line-height:1.6; }
+.planc__cap{ border-top:1px solid var(--hairline); padding:10px 18px; display:flex; align-items:baseline; justify-content:space-between; gap:16px; }
+.planc__name{ font-family:var(--serif-display); font-size:20px; color:var(--pine); letter-spacing:.03em; line-height:1; white-space:nowrap; }
+.planc__name .n{ color:var(--accent); }
+.planc__name small{ font-family:var(--sans); font-weight:600; font-size:8.5px; letter-spacing:.16em; text-transform:uppercase; color:var(--slate-soft); margin-left:10px; }
+.planc__areas{ display:flex; gap:18px; }
+.planc__areas span{ font-family:var(--sans); font-size:11px; color:var(--slate); white-space:nowrap; }
+.planc__areas span b{ font-weight:600; color:var(--ink); }
+.planc__areas .tot b{ color:var(--pine); }
+
+/* =================================================================
+   PAGE 5, AMENITIES
+   ================================================================= */
+.am{ flex:1; min-height:0; display:grid; grid-template-columns:1fr 1fr; gap:30px; }
+.amcol{ display:flex; flex-direction:column; min-height:0; }
+.amcol__head{ display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:11px; }
+.amcol__head .t{ font-family:var(--serif-display); font-weight:400; font-size:23px; letter-spacing:.03em; color:var(--pine); line-height:1; white-space:nowrap; }
+.amcol__head .t .n{ color:var(--accent); }
+.amcol__head .c{ font-family:var(--sans); font-weight:600; font-size:8.5px; letter-spacing:.16em; text-transform:uppercase; color:var(--slate-soft); white-space:nowrap; flex:none; }
+.amcol__hero{ position:relative; overflow:hidden; border-radius:2px; height:232px; flex:none; background:#e9e7e0; }
+.amcol__hero img{ width:100%; height:100%; object-fit:cover; display:block; }
+.amcol__duo{ display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:10px; }
+.amcol__duo figure{ margin:0; position:relative; overflow:hidden; border-radius:2px; height:140px; background:#e9e7e0; }
+.amcol__duo img{ width:100%; height:100%; object-fit:cover; display:block; }
+.amfig{ position:relative; }
+.amfig figcaption{ position:absolute; left:11px; bottom:9px; color:#fff; font-family:var(--sans); font-weight:600; font-size:8.5px; letter-spacing:.16em; text-transform:uppercase; text-shadow:0 1px 7px rgba(0,0,0,.7); z-index:2; }
+.amfig::after{ content:""; position:absolute; left:0; right:0; bottom:0; height:42%; background:linear-gradient(to top,rgba(0,0,0,.45),rgba(0,0,0,0)); }
+.amcol__list{ list-style:none; margin:14px 0 0; padding:0; columns:2; column-gap:20px; }
+.amcol__list li{ font-family:var(--sans); font-size:11px; line-height:1.45; color:var(--ink); padding:5px 0 5px 14px; position:relative; break-inside:avoid; border-top:1px solid var(--hairline-soft); }
+.amcol__list li:first-child{ border-top:0; }
+.amcol__list li::before{ content:""; position:absolute; left:0; top:11px; width:4px; height:4px; background:var(--gold); border-radius:50%; }
+
+/* =================================================================
+   PAGE 6, PRICING AND PAYMENT PLAN
+   ================================================================= */
+.pr{ flex:1; min-height:0; display:flex; flex-direction:column; }
+.pr__table{ display:flex; flex-direction:column; }
+.pr__hr{ display:grid; grid-template-columns:1.4fr 1fr 1fr 1.1fr; padding:0 6px 10px; }
+.pr__hr span{ font-family:var(--sans); font-weight:600; font-size:9px; letter-spacing:.2em; text-transform:uppercase; color:var(--slate-soft); }
+.pr__hr span.r{ text-align:right; }
+.pr__row{ display:grid; grid-template-columns:1.4fr 1fr 1fr 1.1fr; align-items:center; padding:15px 6px; border-top:1px solid var(--hairline); }
+.pr__table .pr__row:last-child{ border-bottom:1px solid var(--hairline); }
+.pr__type{ font-family:var(--serif-display); font-size:22px; color:var(--pine); letter-spacing:.03em; }
+.pr__type small{ display:block; font-family:var(--sans); font-weight:500; font-size:9px; letter-spacing:.16em; text-transform:uppercase; color:var(--slate-soft); margin-top:5px; }
+.pr__cell{ font-family:var(--sans); font-size:14px; color:var(--ink); }
+.pr__cell b{ font-weight:600; }
+.pr__cell small{ font-weight:400; font-size:11px; color:var(--slate); }
+.pr__price{ text-align:right; font-family:var(--sans); font-weight:700; font-size:18px; color:var(--pine); }
+
+.pr__pay{ margin-top:22px; }
+.pr__payhead{ display:flex; align-items:baseline; justify-content:space-between; gap:16px; margin-bottom:12px; }
+.pr__pay h4{ font-family:var(--sans); font-weight:600; font-size:10px; letter-spacing:.22em; text-transform:uppercase; color:var(--accent); margin:0; }
+.pr__paysub{ font-family:var(--sans); font-size:10px; letter-spacing:.04em; color:var(--slate-soft); margin:0; }
+.payplan{ display:grid; grid-template-columns:repeat({{ payment_plan.steps | length if payment_plan else 1 }},1fr); border-top:1px solid var(--hairline); border-left:1px solid var(--hairline); }
+.paycell{ border-right:1px solid var(--hairline); border-bottom:1px solid var(--hairline); padding:14px 14px 15px; }
+.paycell .pct{ font-family:var(--sans); font-weight:700; font-size:23px; color:var(--pine); line-height:1; letter-spacing:-.01em; }
+.paycell .lbl{ font-family:var(--sans); font-weight:600; font-size:8.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--ink); margin-top:10px; }
+.paycell .dt{ font-family:var(--sans); font-size:10px; color:var(--slate); margin-top:4px; }
+.paycell.is-final{ background:var(--paper-warm); }
+.paycell.is-final .pct{ color:var(--accent); }
+
+.pr__agent{ margin-top:auto; padding-top:16px; border-top:1px solid var(--hairline); display:flex; align-items:center; gap:22px; }
+.agent-mono{ width:64px; height:78px; flex:none; background:var(--pine); border-radius:1px; display:flex; align-items:center; justify-content:center; position:relative; }
+.agent-mono span{ font-family:var(--serif-display); font-weight:400; font-size:26px; letter-spacing:.04em; color:var(--gold); }
+.agent-mono::after{ content:""; position:absolute; left:10px; right:10px; bottom:10px; height:1px; background:rgba(193,167,119,.5); }
+.pr__agent .lab{ font-family:var(--sans); font-weight:600; font-size:8.5px; letter-spacing:.2em; text-transform:uppercase; color:var(--accent); margin-bottom:5px; }
+.pr__agent .nm{ font-family:var(--serif-display); font-size:22px; color:var(--pine); letter-spacing:.01em; }
+.pr__agent .who{ flex:none; }
+.pr__agent .sep{ width:1px; align-self:stretch; background:var(--hairline); }
+.pr__agent .mt{ font-family:var(--sans); font-size:11.5px; line-height:1.7; color:var(--slate); }
+.pr__agent .org{ margin-left:auto; text-align:right; font-family:var(--sans); font-weight:600; font-size:9px; letter-spacing:.18em; text-transform:uppercase; color:var(--slate-soft); }
+
+.page .brandfoot{ margin-top:16px; }
+
+/* print */
+@media print{
+  @page{ size:A4 landscape; margin:0; }
+  html,body{ background:#fff; }
+  .sheet{ box-shadow:none; page-break-after:always; break-after:page; }
+  .sheet:last-child{ page-break-after:auto; }
+}
+</style>
+</head>
+<body>
+{# ---- inline icon set (stroke style, 24x24 viewBox) ---- #}
+{% macro icon(name) -%}
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+{%- if name == 'pool' -%}
+<path d="M2 15c1.5 1.2 3 1.2 4.5 0s3-1.2 4.5 0 3 1.2 4.5 0 3-1.2 4.5 0M2 19c1.5 1.2 3 1.2 4.5 0s3-1.2 4.5 0 3 1.2 4.5 0 3-1.2 4.5 0M7 12V5a2 2 0 0 1 4 0M15 12V5a2 2 0 0 1 4 0M7 7h8M7 10h8"/>
+{%- elif name == 'garden' -%}
+<path d="M12 22v-7M9 9a3 3 0 0 1 6 0c0 2-3 4-3 4s-3-2-3-4zM5 14c-1.5-1-2.5-3-2.5-5C4.5 9.5 6 11 6.5 12.5M19 14c1.5-1 2.5-3 2.5-5-2 .5-3.5 2-4 3.5M8 22h8"/>
+{%- elif name == 'gym' -%}
+<path d="M6.5 6.5v11M17.5 6.5v11M3 9v6M21 9v6M6.5 12h11"/>
+{%- elif name == 'parking' -%}
+<path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.4 2.9A3.7 3.7 0 0 0 2 12.2V16c0 .6.4 1 1 1h2"/><circle cx="7" cy="17" r="2"/><path d="M9 17h6"/><circle cx="17" cy="17" r="2"/>
+{%- elif name == 'security' -%}
+<path d="M20 13c0 5-3.5 7.5-7.7 9a.6.6 0 0 1-.6 0C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.2 1.2 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>
+{%- elif name == 'kids' -%}
+<circle cx="12" cy="5" r="2.5"/><path d="M9 20l1.5-6L8 15.5 6 12l4-2h4l4 2-2 3.5-2.5-1.5L15 20"/>
+{%- elif name == 'cinema' -%}
+<path d="M2 7h20v14H2zM2 11h20M7 7l2 4M12 7l2 4M17 7l2 4"/>
+{%- elif name == 'spa' -%}
+<path d="M12 22c4.97 0 9-4.03 9-9-4.97 0-9 4.03-9 9zM12 22c-4.97 0-9-4.03-9-9 4.97 0 9 4.03 9 9zM12 16c0-5 2-9 4-12-4 1-8 5-8 12"/>
+{%- elif name == 'beach' -%}
+<path d="M17.5 19H22M2 19h11M14 6l-4.5 13M14 6c2.5-2 6-1.5 7.5 1-2.5-.5-5 0-7.5-1zM14 6c-3-.5-6 1.5-6.5 4.5 2-1.5 4.5-2 6.5-4.5zM14 6c.5-2 .5-3.5-1-5"/>
+{%- elif name == 'school' -%}
+<path d="M22 10L12 5 2 10l10 5 10-5zM6 12v5c0 1.7 2.7 3 6 3s6-1.3 6-3v-5"/>
+{%- elif name == 'retail' -%}
+<path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4zM3 6h18M16 10a4 4 0 0 1-8 0"/>
+{%- elif name == 'bbq' -%}
+<path d="M5 11a7 7 0 0 0 14 0H5zM12 18v3M8 21h8M10 2c0 1-.5 1.5-.5 2.5S10 6 10 7M14 2c0 1-.5 1.5-.5 2.5S14 6 14 7"/>
+{%- elif name == 'sport' -%}
+<circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20"/>
+{%- elif name == 'yoga' -%}
+<circle cx="12" cy="4.5" r="2"/><path d="M12 8v6M7 21l3.5-5h3L17 21M5 13.5C7 15 9.5 16 12 16s5-1 7-2.5"/>
+{%- elif name == 'lounge' -%}
+<path d="M4 11V7a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v4M2 13a2 2 0 0 1 4 0v3h12v-3a2 2 0 0 1 4 0v5H2zM6 20v1M18 20v1"/>
+{%- elif name == 'kitchen' -%}
+<path d="M7 3v7M4 3v4a3 3 0 0 0 6 0V3M7 13v8M17 3c-2 2-2 5-2 8h4V3zM17 13v8"/>
+{%- elif name == 'window' -%}
+<rect x="4" y="3" width="16" height="18" rx="1"/><path d="M12 3v18M4 12h16"/>
+{%- elif name == 'wardrobe' -%}
+<rect x="4" y="2" width="16" height="20" rx="1"/><path d="M12 2v20M9 11v2M15 11v2"/>
+{%- elif name == 'concierge' -%}
+<path d="M3 18a9 9 0 0 1 18 0zM12 9V7M10 7h4M2 21h20"/>
+{%- elif name == 'view' -%}
+<circle cx="12" cy="12" r="3"/><path d="M2 12s3.5-6.5 10-6.5S22 12 22 12s-3.5 6.5-10 6.5S2 12 2 12z"/>
+{%- elif name == 'furnishing' -%}
+<path d="M20 9V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v3M2 11v8h20v-8M2 15h20M6 19v2M18 19v2"/>
+{%- elif name == 'handover' -%}
+<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18M9 16l2 2 4-4"/>
+{%- elif name == 'plan' -%}
+<rect x="3" y="3" width="18" height="18" rx="1" stroke-dasharray="3 3"/><path d="M9 3v8M9 11h6M15 11v10"/>
+{%- else -%}
+<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/>
+{%- endif -%}
+</svg>
+{%- endmacro %}
+
+{% set cities_line = "Dubai · Sydney · Riyadh · Paris · Beirut · Tokyo · Ljubljana" %}
+{% macro brandfoot() %}
+    <div class="brandfoot">
+      <img src="{{ static_dir }}/allegiance-green.png" alt="Allegiance Real Estate">
+      <div class="cities">{{ cities_line }}</div>
+    </div>
+{% endmacro %}
+
+<div id="stage">
+
+  <!-- ============ PAGE 1, COVER ============ -->
+  <section class="sheet cover">
+    <div class="cover__hero">
+      {% if cover.image %}<img src="{{ cover.image }}" alt="{{ project.name }}">{% endif %}
+      <div class="cover__photoband"></div>
+      <div class="cover__title">
+        <div class="k">{{ cover.kicker }}</div>
+        <h1 class="nm">{{ project.name }}{% if project.developer %}<span class="by">by {{ project.developer }}</span>{% endif %}</h1>
+        {% if cover.tagline %}<div class="loc">{{ cover.tagline }}</div>{% endif %}
+      </div>
+    </div>
+
+    <div class="cover__pane">
+      <div class="cover__numhead">
+        <span class="e">Investment Summary</span>
+        <span class="h">Numbers at a Glance</span>
+      </div>
+
+      <div class="cnumlist">
+        {% for row in numbers %}
+        <div class="cnumrow">
+          <span class="k">{{ row.k }}</span>
+          <span class="v{% if row.style %} {{ row.style }}{% endif %}">{% if row.unit %}<span class="u">{{ row.unit }}</span> {% endif %}{{ row.v }}</span>
+        </div>
+        {% endfor %}
+      </div>
+
+      <div class="cover__panelogo">
+        <img src="{{ static_dir }}/allegiance-green.png" alt="Allegiance Real Estate">
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ PAGE 2, THE LOCATION ============ -->
+  <section class="sheet page">
+    <div class="page__head">
+      <div class="ttl">The Location</div>
+      {% if location.intro %}<div class="sub">{{ location.intro }}</div>{% endif %}
+    </div>
+
+    <div class="loc">
+      {% if location.lead %}<p class="loc__lead">{{ location.lead }}</p>{% endif %}
+      <div class="loc__grid">
+        {% for d in location.drive_times %}
+        <div class="timecell"><span class="dest">{{ d.name }}</span><span class="mins">{{ d.mins }}<small>min</small></span></div>
+        {% endfor %}
+      </div>
+      <div class="loc__note">Drive times indicative, via the city's main road network.</div>
+      {% if has_map %}
+      <div class="loc__map">
+        <div id="map"></div>
+        <div class="loc__maptag">{{ location.map_label }}</div>
+      </div>
+      {% else %}
+      <div class="loc__map loc__map--empty"><div class="loc__placeholder">{{ location.map_label }}</div></div>
+      {% endif %}
+    </div>
+
+    {{ brandfoot() }}
+  </section>
+
+  <!-- ============ PAGE 3, INSIDE AND OUTSIDE ============ -->
+  <section class="sheet page">
+    <div class="page__head">
+      <div class="ttl">Inside and Outside</div>
+      {% if gallery.intro %}<div class="sub">{{ gallery.intro }}</div>{% endif %}
+    </div>
+
+    <div class="gal">
+      {% for ph in gallery.photos %}
+      <figure{% if loop.first %} class="big"{% endif %}>
+        <img src="{{ ph.src }}" alt="{{ ph.caption }}">
+        <figcaption>{{ ph.caption }}</figcaption>
+      </figure>
+      {% endfor %}
+    </div>
+
+    {% if features %}
+    <div class="galfeat">
+      {% for f in features %}
+      <div class="ft">{{ icon(f.icon) }}<span class="tx">{{ f.label }}</span></div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {{ brandfoot() }}
+  </section>
+
+  <!-- ============ PAGE 4, FLOOR PLANS ============ -->
+  <section class="sheet page">
+    <div class="page__head">
+      <div class="ttl">Floor Plans</div>
+      {% if plans.intro %}<div class="sub">{{ plans.intro }}</div>{% endif %}
+    </div>
+
+    <div class="plans">
+      {% set top = plans.cards[:2] %}
+      {% set bot = plans.cards[2:3] %}
+      <div class="plans__row plans__row--top">
+        {% for c in top %}
+        <div class="planc">
+          <div class="planc__img">
+            {% if c.image %}<img src="{{ c.image }}" alt="{{ c.name }} floor plan">
+            {% else %}<div class="planc__empty">{{ icon('plan') }}<span>{{ c.name }} floor plan<br>available on request</span></div>{% endif %}
+          </div>
+          <div class="planc__cap">
+            <div class="planc__name"><span class="n">{{ c.name_accent }}</span> {{ c.name_rest }}{% if c.type_label %}<small>{{ c.type_label }}</small>{% endif %}</div>
+            <div class="planc__areas">
+              {% for a in c.areas %}<span{% if loop.last %} class="tot"{% endif %}>{{ a.k }} <b>{{ a.v }}</b></span>{% endfor %}
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% if bot %}
+      <div class="plans__row plans__row--bot">
+        {% for c in bot %}
+        <div class="planc">
+          <div class="planc__img">
+            {% if c.image %}<img src="{{ c.image }}" alt="{{ c.name }} floor plan">
+            {% else %}<div class="planc__empty">{{ icon('plan') }}<span>{{ c.name }} floor plan<br>available on request</span></div>{% endif %}
+          </div>
+          <div class="planc__cap">
+            <div class="planc__name"><span class="n">{{ c.name_accent }}</span> {{ c.name_rest }}{% if c.type_label %}<small>{{ c.type_label }}</small>{% endif %}</div>
+            <div class="planc__areas">
+              {% for a in c.areas %}<span{% if loop.last %} class="tot"{% endif %}>{{ a.k }} <b>{{ a.v }}</b></span>{% endfor %}
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+
+    {{ brandfoot() }}
+  </section>
+
+  <!-- ============ PAGE 5, AMENITIES ============ -->
+  <section class="sheet page">
+    <div class="page__head">
+      <div class="ttl">Amenities</div>
+    </div>
+
+    <div class="am">
+      {% for col in amenities.columns %}
+      <div class="amcol">
+        <div class="amcol__head">
+          <span class="t"><span class="n">{{ col.title_accent }}</span> {{ col.title_rest }}</span>
+          {% if col.kicker %}<span class="c">{{ col.kicker }}</span>{% endif %}
+        </div>
+        {% if col.hero %}
+        <div class="amcol__hero amfig">
+          <img src="{{ col.hero.src }}" alt="{{ col.hero.caption }}">
+          <figcaption>{{ col.hero.caption }}</figcaption>
+        </div>
+        {% endif %}
+        {% if col.duo %}
+        <div class="amcol__duo">
+          {% for ph in col.duo %}
+          <figure class="amfig"><img src="{{ ph.src }}" alt="{{ ph.caption }}"><figcaption>{{ ph.caption }}</figcaption></figure>
+          {% endfor %}
+        </div>
+        {% endif %}
+        <ul class="amcol__list">
+          {% for item in col['items'] %}<li>{{ item }}</li>{% endfor %}
+        </ul>
+      </div>
+      {% endfor %}
+    </div>
+
+    {{ brandfoot() }}
+  </section>
+
+  <!-- ============ PAGE 6, PRICING AND PAYMENT PLAN ============ -->
+  <section class="sheet page">
+    <div class="page__head">
+      <div class="ttl">{% if payment_plan %}Pricing and Payment Plan{% else %}Pricing{% endif %}</div>
+      {% if pricing.intro %}<div class="sub">{{ pricing.intro }}</div>{% endif %}
+    </div>
+
+    <div class="pr">
+      <div class="pr__table">
+        <div class="pr__hr">
+          <span>Residence</span><span>Size from</span><span>Configuration</span><span class="r">Price from</span>
+        </div>
+        {% for r in pricing.rows %}
+        <div class="pr__row">
+          <div class="pr__type">{{ r.name }}{% if r.sub %}<small>{{ r.sub }}</small>{% endif %}</div>
+          <div class="pr__cell"><b>{{ r.size }}</b> <small>{{ r.size_unit }}</small></div>
+          <div class="pr__cell">{{ r.config }}</div>
+          <div class="pr__price">{{ r.price }}</div>
+        </div>
+        {% endfor %}
+      </div>
+
+      {% if payment_plan %}
+      <div class="pr__pay">
+        <div class="pr__payhead">
+          <h4>Payment Plan</h4>
+          <p class="pr__paysub">{{ payment_plan.summary }}</p>
+        </div>
+        <div class="payplan">
+          {% for s in payment_plan.steps %}
+          <div class="paycell{% if loop.last %} is-final{% endif %}">
+            <div class="pct">{{ s.pct }}</div>
+            <div class="lbl">{{ s.label }}</div>
+            {% if s.when %}<div class="dt">{{ s.when }}</div>{% endif %}
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+
+      <div class="pr__agent">
+        <div class="agent-mono"><span>{{ agent.initials }}</span></div>
+        <div class="who">
+          <div class="lab">Exclusively Presented With</div>
+          <div class="nm">{{ agent.name }}</div>
+        </div>
+        {% if agent.contact_lines %}
+        <div class="sep"></div>
+        <div class="mt">{% for line in agent.contact_lines %}{{ line }}{% if not loop.last %}<br>{% endif %}{% endfor %}</div>
+        {% endif %}
+        <div class="org">Allegiance Real Estate<br>Global Investment Advisory</div>
+      </div>
+    </div>
+
+    {{ brandfoot() }}
+  </section>
+
+</div>
+
+<script>
+  // No map on this brochure → nothing to wait for; signal ready immediately.
+  window.__MAP_READY__ = {{ 'false' if has_map else 'true' }};
+{% if has_map %}
+  (function(){
+    var PROP = [{{ location.lat }}, {{ location.lng }}];
+    var map = L.map('map', { zoomControl:false, attributionControl:true, scrollWheelZoom:false, zoomAnimation:false, fadeAnimation:false })
+           .setView(PROP, 13);
+    var tiles = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+      maxZoom: 19, attribution: '&copy; OpenStreetMap &copy; CARTO'
+    }).addTo(map);
+    L.marker(PROP, { icon: L.divIcon({ className:'', html:'<div class="pin-prop"></div>', iconSize:[18,18], iconAnchor:[9,9] }) })
+      .addTo(map).bindTooltip({{ project.name | tojson }}, { direction:'top', offset:[0,-8], permanent:false });
+
+    var POI = {{ location.map_pois | tojson }};
+    POI.forEach(function(p){
+      L.circleMarker(p.ll, { radius:5, color:'#fff', weight:2, fillColor:'#06342C', fillOpacity:1 })
+        .bindTooltip(p.name, { direction:'top', offset:[0,-4] }).addTo(map);
+    });
+    var all = [PROP].concat(POI.map(function(p){ return p.ll; }));
+    if (all.length > 1) map.fitBounds(all, { padding:[40,40] });
+
+    // Signal readiness once tiles are in (or after a hard cap, so we never hang).
+    tiles.on('load', function(){ window.__MAP_READY__ = true; });
+    setTimeout(function(){ window.__MAP_READY__ = true; }, 9000);
+  })();
+{% endif %}
+</script>
+</body>
+</html>

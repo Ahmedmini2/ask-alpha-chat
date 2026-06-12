@@ -211,6 +211,10 @@ class Video(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     telegram_chat_id: Mapped[Optional[int]] = mapped_column(BigInteger)
+    # Hormozi-caption post-step (see app/captioning, app/workers/heygen_poller.py).
+    captioned_video_url: Mapped[Optional[str]] = mapped_column(Text)
+    caption_status: Mapped[Optional[str]] = mapped_column(Text)  # processing | done | failed
+    caption_error: Mapped[Optional[str]] = mapped_column(Text)
 
 
 class DocumentChunk(Base):

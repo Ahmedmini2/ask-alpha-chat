@@ -102,15 +102,21 @@ def _format_cards(cards: list[dict]) -> str:
         elif kind == "video_job":
             lines.append(
                 f"\n🎬 *Video job started* — id `{c.get('video_id')}` "
-                f"(status: {c.get('status')}). It usually takes 1–2 minutes. "
-                f"Ask _\"is my video ready?\"_ to check."
+                f"(status: {c.get('status')}). HeyGen renders it, then we burn on "
+                f"Hormozi-style captions — usually 2–3 minutes total. The captioned "
+                f"video is pushed here automatically when it's ready."
             )
         elif kind == "video_status":
             status = c.get("status")
             if status == "completed" and c.get("video_url"):
+                cap = " (with captions)" if c.get("captioned_video_url") else ""
                 lines.append(
-                    f"\n✅ *Your video is ready!*\n"
+                    f"\n✅ *Your video is ready!*{cap}\n"
                     f"Download / share: {c.get('video_url')}"
+                )
+            elif status == "captioning" or c.get("caption_status") == "processing":
+                lines.append(
+                    "\n🎬 Rendered — *adding captions now.* Ready in under a minute."
                 )
             elif status == "failed":
                 detail = c.get("error_detail") or "unknown"
@@ -119,6 +125,30 @@ def _format_cards(cards: list[dict]) -> str:
                 lines.append(
                     f"\n⏳ Still rendering (status: {status}). Try again in a minute."
                 )
+        elif kind == "brochure":
+            name = c.get("project_name") or "Project"
+            if c.get("sent_to_telegram"):
+                # The PDF file itself was already pushed via sendDocument; just confirm.
+                lines.append(f"\n📄 *{name} mini brochure* sent above as a PDF.")
+            elif c.get("pdf_url"):
+                lines.append(
+                    f"\n📄 *{name} mini brochure is ready.*\n"
+                    f"Download: {c.get('pdf_url')}"
+                )
+            else:
+                lines.append(f"\n📄 The {name} brochure could not be delivered — please try again.")
+        elif kind == "comparison_pdf":
+            names = c.get("project_names") or []
+            title = " vs ".join(names) if names else "Property comparison"
+            if c.get("sent_to_telegram"):
+                lines.append(f"\n📊 *Comparison — {title}* sent above as a PDF.")
+            elif c.get("pdf_url"):
+                lines.append(
+                    f"\n📊 *Comparison ready — {title}.*\n"
+                    f"Download: {c.get('pdf_url')}"
+                )
+            else:
+                lines.append("\n📊 The comparison could not be delivered — please try again.")
     return "\n".join(lines).strip()
 
 
@@ -283,7 +313,14 @@ def main():
     if not settings.telegram_bot_token:
         raise SystemExit("TELEGRAM_BOT_TOKEN is not configured in .env")
     log.info("starting Telegram bot in polling mode")
-    application = Application.builder().token(settings.telegram_bot_token).build()
+    # concurrent_updates lets a slow handler (e.g. a 30-60s brochure render) run
+    # without blocking other users' messages, which PTB otherwise processes serially.
+    application = (
+        Application.builder()
+        .token(settings.telegram_bot_token)
+        .concurrent_updates(True)
+        .build()
+    )
     application.add_handler(CommandHandler("start", cmd_start))
     application.add_handler(CommandHandler("logout", cmd_logout))
     application.add_handler(MessageHandler(filters.CONTACT, on_contact))
