@@ -1,10 +1,11 @@
 import asyncio
+import io
 import logging
 from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 import boto3
-from botocore.exceptions import ClientError
+import httpx
 from sqlalchemy import select, insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
@@ -16,12 +17,6 @@ from app.tools.registry import Tool, registry
 log = logging.getLogger("askalpha.videos")
 
 _bedrock = boto3.client("bedrock-runtime", region_name=settings.aws_region)
-# gpt-oss (OpenAI on Bedrock) for script writing may live in a different region than the
-# main reasoning model; keep a dedicated client so the two are independently configurable.
-_script_bedrock = boto3.client(
-    "bedrock-runtime",
-    region_name=settings.bedrock_script_region or settings.aws_region,
-)
 
 
 CAMPAIGN_SCRIPT_SYSTEM_PROMPT = """You write short spoken-style UAE real-estate Reel/TikTok promo scripts \
@@ -112,61 +107,29 @@ def _campaign_brief(project: Project) -> str:
     return "\n".join(f"- {f}" for f in facts)
 
 
-def _extract_text(resp: dict) -> str:
-    """Pull the answer text out of a Converse response. gpt-oss is a reasoning model,
-    so message.content may hold a `reasoningContent` block alongside the `text` block —
-    concatenate only the text blocks and skip the chain-of-thought."""
-    blocks = (resp.get("output", {}).get("message", {}) or {}).get("content", []) or []
-    return "".join(b["text"] for b in blocks if isinstance(b, dict) and "text" in b).strip()
-
-
 async def _write_campaign_script(project: Project) -> str:
+    """Write the house-style narration with our main Claude model on Bedrock
+    (settings.bedrock_model_id — the same model the rest of the app uses)."""
     brief = _campaign_brief(project)
-    messages = [{
-        "role": "user",
-        "content": [{"text":
-            "Write the spoken script from this brief. Only use facts present below; "
-            "omit anything missing. Output the narration as one continuous paragraph "
-            "with no labels.\n\n" + brief
-        }],
-    }]
-    effort = (settings.bedrock_script_reasoning_effort or "").strip().lower()
 
     def _call() -> str:
-        kwargs = dict(
-            modelId=settings.bedrock_script_model_id,
+        resp = _bedrock.converse(
+            modelId=settings.bedrock_model_id,
             system=[{"text": CAMPAIGN_SCRIPT_SYSTEM_PROMPT}],
-            messages=messages,
-            # gpt-oss spends tokens on reasoning BEFORE the answer, so give generous
-            # headroom beyond the ~180-word script. Temperature/topP are accepted on Bedrock.
-            inferenceConfig={"maxTokens": 4096, "temperature": 0.7, "topP": 0.9},
+            messages=[{
+                "role": "user",
+                "content": [{"text":
+                    "Write the spoken script from this brief. Only use facts present below; "
+                    "omit anything missing. Output the narration as one continuous paragraph "
+                    "with no labels.\n\n" + brief
+                }],
+            }],
+            inferenceConfig={"maxTokens": 600, "temperature": 0.6},
         )
-
-        def _run(extra: dict) -> str:
-            resp = _script_bedrock.converse(**kwargs, **extra)
-            text = _extract_text(resp)
-            if not text and resp.get("stopReason") == "max_tokens":
-                log.warning(
-                    "gpt-oss script hit maxTokens with no answer text (reasoning starvation) model=%s",
-                    settings.bedrock_script_model_id,
-                )
-            return text
-
-        if effort:
-            try:
-                text = _run({"additionalModelRequestFields": {"reasoning_effort": effort}})
-                if text:
-                    return text
-                # Succeeded but produced only reasoning (no answer) — retry without the
-                # effort hint, which gives the answer the full token budget.
-                log.warning("empty script with reasoning_effort=%s; retrying without it", effort)
-            except ClientError as e:
-                # Some models/regions reject reasoning_effort — retry without it rather
-                # than fail the whole video.
-                if "ValidationException" not in str(e) and "reasoning" not in str(e).lower():
-                    raise
-                log.warning("reasoning_effort rejected by %s; retrying plain", settings.bedrock_script_model_id)
-        return _run({})
+        for block in resp["output"]["message"]["content"]:
+            if "text" in block:
+                return block["text"].strip()
+        return ""
 
     return await asyncio.to_thread(_call)
 
@@ -202,39 +165,77 @@ def _agent_full_name(profile) -> str:
     return " ".join(p for p in (profile.first_name, profile.last_name) if p).strip()
 
 
-async def _resolve_avatar_voice_by_name(name: str) -> tuple[Optional[dict], Optional[dict], str, list[str], list[str]]:
-    """Look up HeyGen avatar + voice by name. Tries the full string first, then the first
-    word (so "Zain Ul Abdeen" falls back to "Zain"). Returns (avatar, voice, name_used,
-    available_avatars, available_voices). When anything is missing, the available_* lists
-    are populated so the caller can show a useful error."""
+async def _resolve_voice_by_name(name: str) -> tuple[Optional[dict], list[str]]:
+    """Look up a HeyGen voice by name. Tries the full string first, then the first word
+    (so "Zain Ul Abdeen" falls back to "Zain"). Returns (voice, available_voice_names),
+    the latter populated only when nothing matched so the caller can show a useful error."""
     name = (name or "").strip()
     if not name:
-        return None, None, "", [], []
-    candidates = [name]
-    parts = name.split()
-    if len(parts) > 1 and parts[0] != name:
-        candidates.append(parts[0])
-
-    avatar: Optional[dict] = None
-    voice: Optional[dict] = None
-    name_used = name
+        return None, []
+    candidates = [name] + ([name.split()[0]] if len(name.split()) > 1 else [])
     for cand in candidates:
-        if avatar is None:
-            avatar = await heygen.find_avatar_by_name(cand)
-            if avatar:
-                name_used = cand
-        if voice is None:
-            voice = await heygen.find_voice_by_name(cand)
-        if avatar and voice:
-            break
+        v = await heygen.find_voice_by_name(cand)
+        if v:
+            return v, []
+    return None, [v.get("name", "") for v in (await heygen.list_voices())][:30]
 
-    available_avatars: list[str] = []
-    available_voices: list[str] = []
-    if avatar is None:
-        available_avatars = [a.get("avatar_name", "") for a in (await heygen.list_avatars())][:30]
-    if voice is None:
-        available_voices = [v.get("name", "") for v in (await heygen.list_voices())][:30]
-    return avatar, voice, name_used, available_avatars, available_voices
+
+def _to_jpeg(img_bytes: bytes) -> Optional[bytes]:
+    """Convert any preview image (HeyGen serves WEBP) to JPEG so Telegram sendPhoto
+    accepts it. Returns None if Pillow is unavailable or decoding fails."""
+    try:
+        from PIL import Image
+        im = Image.open(io.BytesIO(img_bytes))
+        if im.mode != "RGB":
+            im = im.convert("RGB")
+        out = io.BytesIO()
+        im.save(out, format="JPEG", quality=88)
+        return out.getvalue()
+    except Exception as e:  # pragma: no cover — Pillow missing / corrupt image
+        log.warning("preview JPEG conversion failed: %s", e)
+        return None
+
+
+async def _fetch_bytes(url: str) -> Optional[bytes]:
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as c:
+            r = await c.get(url)
+            if r.status_code < 400:
+                return r.content
+            log.warning("preview fetch %s -> %s", url[:60], r.status_code)
+    except Exception as e:  # pragma: no cover
+        log.warning("preview fetch error: %s", e)
+    return None
+
+
+async def _send_telegram_photo(chat_id: int, image_bytes: bytes, caption: str) -> bool:
+    """Send one look preview as a photo (name as caption). Converts to JPEG first; if that
+    isn't possible, falls back to sendDocument (Telegram renders the image inline)."""
+    if not settings.telegram_bot_token:
+        return False
+    base = f"https://api.telegram.org/bot{settings.telegram_bot_token}"
+    jpeg = await asyncio.to_thread(_to_jpeg, image_bytes)
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as c:
+            if jpeg is not None:
+                r = await c.post(
+                    f"{base}/sendPhoto",
+                    data={"chat_id": str(chat_id), "caption": caption[:1024]},
+                    files={"photo": ("look.jpg", jpeg, "image/jpeg")},
+                )
+            else:
+                r = await c.post(
+                    f"{base}/sendDocument",
+                    data={"chat_id": str(chat_id), "caption": caption[:1024]},
+                    files={"document": ("look.webp", image_bytes, "image/webp")},
+                )
+            if r.status_code >= 400:
+                log.warning("telegram sendPhoto failed %s: %s", r.status_code, r.text[:200])
+                return False
+            return True
+    except Exception as e:
+        log.warning("telegram sendPhoto error: %s", e)
+        return False
 
 
 async def create_promo_video_handler(db: AsyncSession, args: dict, ctx: dict) -> dict:
@@ -264,22 +265,40 @@ async def create_promo_video_handler(db: AsyncSession, args: dict, ctx: dict) ->
     if project is None:
         return {"error": f"No project found with id {project_id}"}
 
+    look_arg = (args.get("look") or "").strip()
     try:
-        avatar, voice, name_used, avail_avatars, avail_voices = await _resolve_avatar_voice_by_name(target_name)
+        looks = await heygen.list_looks_for(target_name)
+        voice, avail_voices = await _resolve_voice_by_name(target_name)
     except heygen.HeyGenError as e:
         log.error("HeyGen lookup failed: %s", e)
         return {"error": f"Couldn't reach HeyGen to look up avatar/voice: {e}"}
 
-    missing: list[str] = []
-    if avatar is None:
-        missing.append(f"avatar named '{target_name}'. Please create it in HeyGen → Avatars first.")
+    if not looks:
+        return {"error": f"No avatar found for {target_name!r} in HeyGen. Please create the avatar "
+                         "(and its looks) in HeyGen → Avatars first."}
+
+    # Which look? Explicit choice wins; a single-look avatar needs no choice; otherwise the
+    # agent must pick first (this enforces the look question even if the model skipped it).
+    if look_arg:
+        chosen = await heygen.find_look(target_name, look_arg)
+        if chosen is None:
+            names = [lk["look_name"] for lk in looks]
+            return {"error": f"Couldn't match look {look_arg!r} for {target_name}. "
+                             f"Available looks: {', '.join(names)}"}
+    elif len(looks) == 1:
+        chosen = looks[0]
+    else:
+        return {
+            "error": "Multiple looks available — ask the agent which look to use before generating.",
+            "needs_look_choice": True,
+            "agent_name": target_name,
+            "looks": [lk["look_name"] for lk in looks],
+        }
+
+    name_used = target_name
     if voice is None:
-        missing.append(f"voice named '{target_name}'. Please create/train it in HeyGen → Voices first.")
-    if missing:
-        msg = f"Missing in HeyGen for {target_name!r}: " + "; ".join(missing)
-        if avatar is None and avail_avatars:
-            msg += f"\nAvatars currently in the account: {', '.join(a for a in avail_avatars if a) or '(none named)'}"
-        if voice is None and avail_voices:
+        msg = f"Missing in HeyGen: voice named {target_name!r}. Please create/train it in HeyGen → Voices first."
+        if avail_voices:
             msg += f"\nVoices currently in the account: {', '.join(v for v in avail_voices if v) or '(none named)'}"
         return {"error": msg}
 
@@ -316,16 +335,17 @@ async def create_promo_video_handler(db: AsyncSession, args: dict, ctx: dict) ->
     try:
         heygen_video_id = await heygen.generate_video(
             script=explicit_script,
-            avatar_id=avatar["avatar_id"],
+            avatar_id=chosen["avatar_id"],
             voice_id=voice["voice_id"],
             background_url=background_url,
             resolution="1080p",
             aspect_ratio="9:16",
-            # Emit a CLEAN video — our Remotion post-step (app/captioning) burns the
-            # captions with controlled, title-safe placement. Letting HeyGen also burn
-            # its own (un-positionable) captions would double them on every success and
-            # is exactly the off-screen-text problem we're fixing.
+            # Emit a CLEAN video (no HeyGen burn-in). HeyGen's own captions are
+            # un-positionable and ran off-screen, so they're disabled here. NOTE: the
+            # Remotion caption post-step was removed — until a replacement lands, videos
+            # ship with NO captions. Flip to caption=True for HeyGen's built-in ones.
             caption=False,
+            is_photo=chosen["is_photo"],
         )
     except heygen.HeyGenError as e:
         log.error("HeyGen video generation failed: %s", e)
@@ -353,9 +373,9 @@ async def create_promo_video_handler(db: AsyncSession, args: dict, ctx: dict) ->
     await db.commit()
 
     log.info(
-        "video job started id=%s heygen=%s project=%s by=%s for=%s avatar=%s voice=%s bg=%s tg=%s",
-        video_id, heygen_video_id, project.id, user_id, name_used,
-        avatar.get("avatar_id"), voice.get("voice_id"), background_source, tg_chat_id,
+        "video job started id=%s heygen=%s project=%s by=%s for=%s look=%r avatar=%s photo=%s voice=%s bg=%s tg=%s",
+        video_id, heygen_video_id, project.id, user_id, name_used, chosen["look_name"],
+        chosen["avatar_id"], chosen["is_photo"], voice.get("voice_id"), background_source, tg_chat_id,
     )
     return {
         "video_id": str(video_id),
@@ -363,16 +383,16 @@ async def create_promo_video_handler(db: AsyncSession, args: dict, ctx: dict) ->
         "project_id": project.id,
         "project_name": project.name,
         "for_agent": name_used,
+        "look": chosen["look_name"],
         "script_preview": (explicit_script or "")[:260],
         "script_word_count": len(explicit_script.split()) if explicit_script else 0,
-        "avatar_name": avatar.get("avatar_name"),
+        "avatar_name": name_used,
         "voice_name": voice.get("name"),
         "background": background_source,
         "format": "1080x1920 vertical (Reels/TikTok)",
         "message": (
-            "Video generation started. After HeyGen renders, we burn on Hormozi-style "
-            "captions, so total wait is typically 2–3 minutes. "
-            + ("You'll get a Telegram message with the captioned video + download link the moment it's ready."
+            "Video generation started. Typical wait is 1–2 minutes. "
+            + ("You'll get a Telegram message with the download link the moment it's ready."
                if tg_chat_id else "Ask \"is my video ready?\" to check.")
         ),
     }
@@ -384,11 +404,12 @@ registry.register(Tool(
         "Generate a short AI-avatar promotional video about a project via HeyGen. "
         "Only available to agents (logged-in profiles with role=salesagent or admin "
         "AND ask_alpha_access in (read, write)). The tool returns a video_id and "
-        "starts the job asynchronously — HeyGen renders it and then Hormozi-style captions "
-        "are burned on, so it typically takes 2–3 minutes to be ready. "
-        "Use this when an agent asks to create a marketing video, promo video, or AI "
-        "video about a specific project. If the user only describes the project by name, "
-        "first call search_projects to get the numeric project_id."
+        "starts the job asynchronously — it typically takes 1–2 minutes to render. "
+        "IMPORTANT: do NOT call this until the agent has chosen an avatar look — first call "
+        "list_avatar_looks and ask them which look to use, then pass it as `look`. (If the "
+        "avatar has only one look, list_avatar_looks returns single_look and you may call this "
+        "directly.) If the user only describes the project by name, first call search_projects "
+        "to get the numeric project_id."
     ),
     input_schema={
         "type": "object",
@@ -404,6 +425,15 @@ registry.register(Tool(
                     "avatar AND voice in the account (e.g. 'Zain', 'Rami', 'Zain Ul Abdeen'). "
                     "If omitted, the requester's own profile name is used. Use this when the "
                     "logged-in user is generating videos on behalf of teammates."
+                ),
+            },
+            "look": {
+                "type": "string",
+                "description": (
+                    "The avatar look the agent chose, by name (e.g. 'Dubai Executive', 'The Golf "
+                    "Concierge') — must be one of the names list_avatar_looks returned. Omit ONLY "
+                    "when the avatar has a single look. If it doesn't match, the tool replies with "
+                    "the available look names so you can re-ask."
                 ),
             },
             "script": {
@@ -426,6 +456,106 @@ registry.register(Tool(
         "required": ["project_id"],
     },
     handler=create_promo_video_handler,
+))
+
+
+# Cap on how many looks we push as photos before asking the agent to choose (keeps a
+# busy avatar group from spamming 20 photos into a chat).
+MAX_LOOKS_SHOWN = 10
+
+
+async def list_avatar_looks_handler(db: AsyncSession, args: dict, ctx: dict) -> dict:
+    user_id = ctx.get("user_id")
+    if user_id is None:
+        return {"error": "Sign in required. This feature is only for our agents."}
+    profile = await get_profile(db, user_id)
+    if not is_agent(profile):
+        return {"error": "This feature is only available to agents."}
+
+    target_name = (args.get("agent_name") or "").strip() or _agent_full_name(profile) or (profile.first_name or "")
+    if not target_name:
+        return {"error": "No name to resolve an avatar. Provide agent_name or set first/last name on your profile."}
+    project_id = args.get("project_id")
+
+    try:
+        looks = await heygen.list_looks_for(target_name)
+    except heygen.HeyGenError as e:
+        log.error("HeyGen looks lookup failed: %s", e)
+        return {"error": f"Couldn't reach HeyGen to list looks: {e}"}
+
+    if not looks:
+        return {"error": f"No avatar found for {target_name!r} in HeyGen. Please create the avatar "
+                         "(and its looks) in HeyGen → Avatars first."}
+
+    if len(looks) == 1:
+        return {
+            "status": "single_look",
+            "agent_name": target_name,
+            "project_id": project_id,
+            "look": {"name": looks[0]["look_name"]},
+            "count": 1,
+            "message": f"{target_name} has a single avatar look — no choice needed; you can generate directly.",
+        }
+
+    shown = looks[:MAX_LOOKS_SHOWN]
+
+    # Push each look as a captioned photo straight into the Telegram chat (one per look).
+    sent = False
+    tg_chat_id = ctx.get("telegram_chat_id")
+    if tg_chat_id:
+        for lk in shown:
+            if not lk.get("preview_url"):
+                continue
+            data = await _fetch_bytes(lk["preview_url"])
+            if not data:
+                continue
+            if await _send_telegram_photo(int(tg_chat_id), data, caption=lk["look_name"]):
+                sent = True
+
+    log.info("avatar looks listed for=%s count=%d/%d telegram=%s",
+             target_name, len(shown), len(looks), sent)
+    return {
+        "status": "looks_listed",
+        "agent_name": target_name,
+        "project_id": project_id,
+        "count": len(shown),
+        "total_available": len(looks),
+        "truncated": len(looks) > len(shown),
+        "looks": [{"name": lk["look_name"], "preview_url": lk.get("preview_url")} for lk in shown],
+        "sent_to_telegram": sent,
+    }
+
+
+registry.register(Tool(
+    name="list_avatar_looks",
+    description=(
+        "List the available avatar LOOKS (appearances/outfits) for an agent's HeyGen avatar so the "
+        "agent can choose one before a promo video is generated. ALWAYS call this FIRST when an agent "
+        "asks to make a promo/marketing video — before create_promo_video. On Telegram it sends one "
+        "preview photo per look (the look's name as the caption); on web it returns the looks with "
+        "preview image URLs. Your reply should LIST THE LOOK NAMES (not the URLs) and ask which to use. "
+        "If it returns status 'single_look', skip the question and call create_promo_video directly. "
+        "Identify the person with agent_name (defaults to the requester); pass project_id through so "
+        "you remember which project the video is for. Agents only."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "agent_name": {
+                "type": "string",
+                "description": (
+                    "Optional: whose avatar's looks to list — must match a HeyGen avatar (e.g. 'Zain', "
+                    "'Ramy Nabil'). Omit to use the requesting agent's own name."
+                ),
+            },
+            "project_id": {
+                "type": "integer",
+                "description": "The project the video will be about — pass it through so it's remembered for the follow-up.",
+            },
+        },
+        "required": [],
+    },
+    handler=list_avatar_looks_handler,
 ))
 
 
@@ -459,13 +589,10 @@ async def check_my_video_status_handler(db: AsyncSession, args: dict, ctx: dict)
     if v.project_id is not None:
         p = (await db.execute(select(Project.name).where(Project.id == v.project_id))).scalar_one_or_none()
         project_name = p
-    # Prefer the captioned cut once it's ready; fall back to the raw HeyGen video.
     return {
         "video_id": str(v.id),
         "status": v.status,
-        "caption_status": v.caption_status,
-        "video_url": v.captioned_video_url or v.video_url,
-        "captioned_video_url": v.captioned_video_url,
+        "video_url": v.video_url,
         "thumbnail_url": v.thumbnail_url,
         "project_id": v.project_id,
         "project_name": project_name,

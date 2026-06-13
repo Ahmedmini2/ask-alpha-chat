@@ -67,6 +67,152 @@ async def find_voice_by_name(name: str) -> Optional[dict]:
     return None
 
 
+# --------------------------------------------------------------------------
+# avatar "looks" (appearances of one person)
+#
+# An agent's avatar lives as a HeyGen *avatar group* (e.g. "Zain Ul Abdeen"),
+# and the group holds one or more *looks*. Two group shapes occur in the wild:
+#   - photo-avatar looks  -> {id, name, image_url, status, is_motion, ...}
+#   - standard-avatar looks -> {avatar_id, avatar_name, preview_image_url, type}
+# We normalise both to {avatar_id, look_name, preview_url, is_photo}.
+# --------------------------------------------------------------------------
+
+async def list_avatar_groups() -> list[dict]:
+    async with _client() as c:
+        r = await c.get("/v2/avatar_group.list")
+        if r.status_code >= 400:
+            raise HeyGenError(f"avatar_group.list failed {r.status_code}: {r.text[:200]}")
+        data = r.json().get("data") or {}
+        return data.get("avatar_group_list") or []
+
+
+async def list_group_looks(group_id: str) -> list[dict]:
+    async with _client() as c:
+        r = await c.get(f"/v2/avatar_group/{group_id}/avatars")
+        if r.status_code >= 400:
+            raise HeyGenError(f"group looks failed {r.status_code}: {r.text[:200]}")
+        data = r.json().get("data") or {}
+        return data.get("avatar_list") or data.get("avatars") or []
+
+
+def _friendly_look_name(raw_name: Optional[str], person: str) -> str:
+    """Human label for a look. HeyGen photo-avatar looks already carry curated names
+    ('Dubai Executive'), so we mostly pass through; a look that's just the person's
+    name (or unnamed) becomes 'Original'."""
+    raw = " ".join((raw_name or "").split())
+    if not raw or _normalize_name(raw) == _normalize_name(person):
+        return "Original"
+    return raw
+
+
+def _normalize_look(look: dict, person: str) -> Optional[dict]:
+    """Map either group-look shape to our common form; None if not generation-ready."""
+    avatar_id = look.get("avatar_id") or look.get("id")
+    if not avatar_id:
+        return None
+    # photo-avatar looks report a status; skip any that aren't finished training.
+    status = look.get("status")
+    if status is not None and status not in ("completed", "ready", "success"):
+        return None
+    is_photo = bool(look.get("id") and not look.get("avatar_id"))
+    return {
+        "avatar_id": avatar_id,
+        "look_name": _friendly_look_name(look.get("name") or look.get("avatar_name"), person),
+        "preview_url": look.get("image_url") or look.get("preview_image_url"),
+        "is_photo": is_photo,
+    }
+
+
+def _match_group(groups: list[dict], agent_name: str) -> Optional[dict]:
+    """Pick the avatar group for this person: exact name, else first-name token,
+    else a containment match. Among ties, prefer the one with the most looks."""
+    t = _normalize_name(agent_name)
+    if not t:
+        return None
+    t0 = t.split()[0]
+
+    def key(g: dict) -> int:
+        return g.get("num_looks") or 0
+
+    exact = [g for g in groups if _normalize_name(g.get("name", "")) == t]
+    if exact:
+        return max(exact, key=key)
+    first = [g for g in groups if _normalize_name(g.get("name", "")).split()[:1] == [t0]]
+    if first:
+        return max(first, key=key)
+    contains = [g for g in groups
+                if t in _normalize_name(g.get("name", "")) or _normalize_name(g.get("name", "")) in t]
+    return max(contains, key=key) if contains else None
+
+
+def _dedupe_look_names(looks: list[dict]) -> list[dict]:
+    """Disambiguate duplicate display names so typed-name selection stays unambiguous."""
+    seen: dict[str, int] = {}
+    for lk in looks:
+        base = lk["look_name"]
+        n = seen.get(base.lower(), 0) + 1
+        seen[base.lower()] = n
+        if n > 1:
+            lk["look_name"] = f"{base} ({n})"
+    return looks
+
+
+async def list_looks_for(agent_name: str) -> list[dict]:
+    """All selectable looks for a person. Prefers the matching avatar group; falls back
+    to the flat standard avatar (today's behaviour) when there is no group."""
+    person = (agent_name or "").strip()
+    if not person:
+        return []
+    looks: list[dict] = []
+    try:
+        group = _match_group(await list_avatar_groups(), person)
+        if group and group.get("id"):
+            for raw in await list_group_looks(group["id"]):
+                norm = _normalize_look(raw, person)
+                if norm and norm["avatar_id"] not in {l["avatar_id"] for l in looks}:
+                    looks.append(norm)
+    except HeyGenError:
+        looks = []  # fall back to the flat avatar below
+
+    if not looks:
+        # No group (or empty): use the flat standard avatar, matching the old resolver
+        # (full name, then first word — "Zain Ul Abdeen" -> "Zain").
+        for cand in ([person] + ([person.split()[0]] if len(person.split()) > 1 else [])):
+            a = await find_avatar_by_name(cand)
+            if a:
+                looks = [{
+                    "avatar_id": a["avatar_id"],
+                    "look_name": _friendly_look_name(a.get("avatar_name"), person),
+                    "preview_url": a.get("preview_image_url"),
+                    "is_photo": False,
+                }]
+                break
+    return _dedupe_look_names(looks)
+
+
+async def find_look(agent_name: str, look_query: str) -> Optional[dict]:
+    """Resolve a typed look name back to a concrete look. Exact (case-insensitive)
+    first, then substring, then token overlap."""
+    q = _normalize_name(look_query)
+    looks = await list_looks_for(agent_name)
+    if not q or not looks:
+        return None
+    for lk in looks:
+        if _normalize_name(lk["look_name"]) == q:
+            return lk
+    for lk in looks:
+        ln = _normalize_name(lk["look_name"])
+        if q in ln or ln in q:
+            return lk
+    qtok = set(q.split())
+    best, best_overlap = None, 0
+    for lk in looks:
+        overlap = len(qtok & set(_normalize_name(lk["look_name"]).split()))
+        if overlap > best_overlap:
+            best, best_overlap = lk, overlap
+    return best
+
+
 async def generate_video(
     script: str,
     avatar_id: str,
@@ -76,6 +222,7 @@ async def generate_video(
     resolution: str = "1080p",
     aspect_ratio: str = "9:16",
     caption: bool = True,
+    is_photo: bool = False,
     **_legacy_kwargs,  # accept (and ignore) old width/height kwargs
 ) -> str:
     """Submit a video job via the v3 /v3/videos endpoint.
@@ -85,11 +232,14 @@ async def generate_video(
     engine isn't supported by the avatar (HeyGen returns 400/422), we retry once with
     "avatar_iv" then with no engine.
 
+    `is_photo` selects how the character is addressed: a HeyGen *photo-avatar look*
+    (`type: talking_photo`, `talking_photo_id`) vs a standard avatar (`type: avatar`,
+    `avatar_id`). For a photo look we try the talking_photo shape first and fall back to
+    the avatar shape — rejected attempts cost nothing (no job is created on a 4xx).
+
     Returns the HeyGen video_id.
     """
     base_payload: dict = {
-        "type": "avatar",
-        "avatar_id": avatar_id,
         "script": script,
         "voice_id": voice_id,
         "resolution": resolution,
@@ -104,31 +254,42 @@ async def generate_video(
         # response.subtitle_url regardless.
         base_payload["caption"] = {"file_format": "srt", "style": "default"}
 
-    # Try the requested engine first; on engine-related rejection, fall back.
+    # How to address the character. For a photo look, the talking_photo shape is the
+    # likely-correct one; the avatar shape is a safety net (and vice-versa is unnecessary
+    # for standard avatars, which keep exactly the old single-shape behaviour).
+    if is_photo:
+        char_variants = [("talking_photo", "talking_photo_id"), ("avatar", "avatar_id")]
+    else:
+        char_variants = [("avatar", "avatar_id")]
+
     engines_to_try = [engine, "avatar_iv", None]
-    seen: set[Optional[str]] = set()
     last_err: Optional[str] = None
     async with _client() as c:
-        for eng in engines_to_try:
-            if eng in seen:
-                continue
-            seen.add(eng)
-            payload = dict(base_payload)
-            if eng:
-                payload["engine"] = {"type": eng}
-            r = await c.post("/v3/videos", json=payload)
-            if r.status_code < 400:
-                data = r.json().get("data") or {}
-                vid = data.get("video_id")
-                if not vid:
-                    raise HeyGenError(f"no video_id in v3 response: {r.text[:300]}")
-                return vid
-            body = r.text[:400]
-            last_err = f"{r.status_code}: {body}"
-            # Only fall back on engine-related errors; bubble up anything else.
-            if "engine" not in body.lower() and r.status_code not in (400, 422):
-                raise HeyGenError(f"v3 generate failed {last_err}")
-    raise HeyGenError(f"v3 generate failed across engines: {last_err}")
+        for ctype, id_field in char_variants:
+            seen: set[Optional[str]] = set()
+            for eng in engines_to_try:
+                if eng in seen:
+                    continue
+                seen.add(eng)
+                payload = dict(base_payload)
+                payload["type"] = ctype
+                payload[id_field] = avatar_id
+                if eng:
+                    payload["engine"] = {"type": eng}
+                r = await c.post("/v3/videos", json=payload)
+                if r.status_code < 400:
+                    data = r.json().get("data") or {}
+                    vid = data.get("video_id")
+                    if not vid:
+                        raise HeyGenError(f"no video_id in v3 response: {r.text[:300]}")
+                    return vid
+                body = r.text[:400]
+                last_err = f"{ctype}/{eng} {r.status_code}: {body}"
+                # Only keep trying on recoverable (engine / 4xx-validation) errors; bubble
+                # up anything else (auth, 5xx) immediately.
+                if "engine" not in body.lower() and r.status_code not in (400, 422):
+                    raise HeyGenError(f"v3 generate failed {last_err}")
+    raise HeyGenError(f"v3 generate failed across variants: {last_err}")
 
 
 async def upload_asset(image_bytes: bytes, content_type: str = "image/png") -> str:

@@ -6,7 +6,6 @@ import pytest
 from app.tools.videos import (
     _campaign_brief,
     _compose_background_prompt,
-    _extract_text,
 )
 
 
@@ -68,28 +67,6 @@ def test_background_prompt_is_length_capped():
     p = FakeProject(name="X")
     out = _compose_background_prompt(p, "skyline " * 500)
     assert len(out) <= 1400
-
-
-# ----------------------------------- _extract_text ------------------------------------
-
-def test_extract_text_skips_reasoning_block():
-    resp = {"output": {"message": {"content": [
-        {"reasoningContent": {"reasoningText": {"text": "let me think..."}}},
-        {"text": "Welcome to Damac District."},
-    ]}}}
-    assert _extract_text(resp) == "Welcome to Damac District."
-
-
-def test_extract_text_concatenates_multiple_text_blocks():
-    resp = {"output": {"message": {"content": [
-        {"text": "Hello "}, {"text": "world"},
-    ]}}}
-    assert _extract_text(resp) == "Hello world"
-
-
-def test_extract_text_handles_missing_or_empty():
-    assert _extract_text({}) == ""
-    assert _extract_text({"output": {"message": {"content": []}}}) == ""
 
 
 # ----------------------------------- _campaign_brief ----------------------------------

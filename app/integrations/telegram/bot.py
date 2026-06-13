@@ -102,21 +102,15 @@ def _format_cards(cards: list[dict]) -> str:
         elif kind == "video_job":
             lines.append(
                 f"\n🎬 *Video job started* — id `{c.get('video_id')}` "
-                f"(status: {c.get('status')}). HeyGen renders it, then we burn on "
-                f"Hormozi-style captions — usually 2–3 minutes total. The captioned "
-                f"video is pushed here automatically when it's ready."
+                f"(status: {c.get('status')}). It usually takes 1–2 minutes. "
+                f"Ask _\"is my video ready?\"_ to check."
             )
         elif kind == "video_status":
             status = c.get("status")
             if status == "completed" and c.get("video_url"):
-                cap = " (with captions)" if c.get("captioned_video_url") else ""
                 lines.append(
-                    f"\n✅ *Your video is ready!*{cap}\n"
+                    f"\n✅ *Your video is ready!*\n"
                     f"Download / share: {c.get('video_url')}"
-                )
-            elif status == "captioning" or c.get("caption_status") == "processing":
-                lines.append(
-                    "\n🎬 Rendered — *adding captions now.* Ready in under a minute."
                 )
             elif status == "failed":
                 detail = c.get("error_detail") or "unknown"
@@ -137,6 +131,11 @@ def _format_cards(cards: list[dict]) -> str:
                 )
             else:
                 lines.append(f"\n📄 The {name} brochure could not be delivered — please try again.")
+        elif kind == "avatar_looks":
+            # The look preview photos were already pushed (one per look, name as caption) by
+            # the tool handler, and the assistant's own text asks the question — so nothing to
+            # render here. Kept as an explicit branch so the card isn't silently dropped.
+            pass
         elif kind == "comparison_pdf":
             names = c.get("project_names") or []
             title = " vs ".join(names) if names else "Property comparison"

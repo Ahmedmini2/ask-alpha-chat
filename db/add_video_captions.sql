@@ -1,5 +1,9 @@
 -- Caption post-processing columns for the videos table (Supabase project pqzsdxcjyqjjvfsunzak).
 --
+-- APPLIED. The first caption implementation (Remotion) was removed, but these columns
+-- are intentionally KEPT for a future captioning approach (TBD). They're nullable and
+-- currently unwritten. Drop them only if that plan is abandoned (rollback at the bottom).
+--
 -- Additive + nullable, so safe to apply on the shared production DB and trivially
 -- reversible (DROP COLUMN). Run in the Supabase SQL editor, via `supabase db push`,
 -- or the Supabase MCP apply_migration.

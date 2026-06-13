@@ -140,9 +140,11 @@ registry.register(Tool(
         "plans, amenities, pricing and payment plan). Use when an agent asks for a 'Branded "
         "PDF', 'Mini PDF', 'mini brochure', 'project PDF' or similar. Agents only. Takes "
         "~30-60 seconds. Returns a download URL; on Telegram the PDF file is also sent "
-        "directly into the chat. Investment metrics we don't store (net yield, appreciation, "
-        "days on market, etc.) print as '—' unless the agent states values — pass those as "
-        "override arguments. Never invent override values yourself."
+        "directly into the chat. Investment metrics (net yield, area rent return, appreciation, "
+        "Y5 value, time-to-sell) are auto-filled from our area model — agents can still override "
+        "any of them by stating a value (pass it as the matching override argument). Days on market "
+        "is the only one that stays blank unless the agent provides it. Never invent override values "
+        "yourself — only pass numbers the agent explicitly stated."
     ),
     input_schema={
         "type": "object",

@@ -13,6 +13,7 @@ from typing import Any, Optional
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.analytics import property_metrics as metrics
 from app.brochures import captions, storage
 from app.db.models import Developer, Project, ProjectAsset, ProjectUnit
 
@@ -598,14 +599,40 @@ async def build_context(
         if med:
             cheaper_pct = (price_sqft - med) / med * 100.0
 
-    net_yield = _f(ov.get("net_yield_pct"))
-    area_rent = _f(ov.get("area_avg_rent_pct"))
-    appreciation = _f(ov.get("annual_appreciation_pct"))
+    # Area-model investment estimates (net yield, area rent return, appreciation,
+    # Y5 value, time-to-sell). Real area data feeds the formulas where we have it;
+    # the per-community table is the fallback. Agent-stated overrides still win.
+    m = None
+    if entry_price:
+        from_entry_group = bool(
+            cheapest_group and cheapest_group["price_from"]
+            and entry_price == cheapest_group["price_from"]
+        )
+        area_inputs = await metrics.gather_area_inputs(db, project)
+        m = metrics.compute_metrics(
+            entry_price,
+            beds=cheapest_group["bedrooms"] if from_entry_group else None,
+            sqft=cheapest_group["size_from"] if from_entry_group else None,
+            community=district or city,
+            area_yield=area_inputs["area_yield"],
+            area_appreciation=area_inputs["area_appreciation"],
+            activity_label=area_inputs["activity_label"],
+        )
+
+    def _metric(ov_key: str, m_key: str) -> Optional[float]:
+        v = _f(ov.get(ov_key))
+        if v is None and m is not None:
+            v = _f(m.get(m_key))
+        return v
+
+    net_yield = _metric("net_yield_pct", "net_yield_pct")
+    area_rent = _metric("area_avg_rent_pct", "area_avg_rent_return_pct")
+    appreciation = _metric("annual_appreciation_pct", "annual_appreciation_pct")
     y5_value = _f(ov.get("y5_projected_value_aed"))
     if y5_value is None and appreciation is not None and entry_price:
         y5_value = entry_price * (1 + appreciation / 100.0) ** 5
-    dom = _f(ov.get("days_on_market"))
-    tts = _f(ov.get("time_to_sell_days"))
+    dom = _f(ov.get("days_on_market"))  # per-listing DOM — override-only, we don't store it
+    tts = _metric("time_to_sell_days", "time_to_sell_days")
 
     service_charge = clean_text(ov.get("service_charge") or project.service_charge or "")
     sc_value, sc_unit = None, None
