@@ -35,6 +35,12 @@ class Settings(BaseSettings):
     heygen_api_key: str = ""
     heygen_avatar_id: str = "Daisy-inskirt-20220818"   # HeyGen's default sample avatar
     heygen_voice_id: str = "2d5b0e6cf36f460aa7fc47e3eee4ba54"  # default English voice
+    # Pin each agent to a SPECIFIC HeyGen voice_id so the avatar's voice can't drift to a
+    # same-named preset (e.g. agent "Said" matching a stock voice called "Said" instead of
+    # his clone). JSON map of agent name (any case) -> HeyGen voice_id, e.g.
+    # HEYGEN_AGENT_VOICES='{"Said":"<voice_id>","Zain Ul Abdeen":"<voice_id>"}'. Matched on
+    # the full name first, then the first token. Find a voice_id from GET /v2/voices.
+    heygen_agent_voices: str = "{}"
     # Vertical 1080x1920 — Reels / TikTok native.
     heygen_video_width: int = 1080
     heygen_video_height: int = 1920
@@ -55,6 +61,18 @@ class Settings(BaseSettings):
     db_user: str = ""
     db_password: str = ""
     db_name: str = "postgres"
+
+    @property
+    def agent_voice_map(self) -> dict:
+        """Parsed heygen_agent_voices: {normalized agent name -> voice_id}. Empty on bad JSON."""
+        import json
+        try:
+            raw = json.loads(self.heygen_agent_voices or "{}")
+        except (ValueError, TypeError):
+            return {}
+        if not isinstance(raw, dict):
+            return {}
+        return {" ".join(str(k).split()).lower(): str(v) for k, v in raw.items() if v}
 
     @property
     def database_url(self) -> URL:

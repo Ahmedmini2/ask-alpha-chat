@@ -120,6 +120,9 @@ def _normalize_look(look: dict, person: str) -> Optional[dict]:
         "look_name": _friendly_look_name(look.get("name") or look.get("avatar_name"), person),
         "preview_url": look.get("image_url") or look.get("preview_image_url"),
         "is_photo": is_photo,
+        # Best-effort: the voice HeyGen has paired with this look, when the group API
+        # returns one. Lets us use the avatar's own voice instead of guessing by name.
+        "default_voice_id": look.get("default_voice_id") or look.get("voice_id") or None,
     }
 
 

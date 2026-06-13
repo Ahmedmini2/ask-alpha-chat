@@ -165,19 +165,49 @@ def _agent_full_name(profile) -> str:
     return " ".join(p for p in (profile.first_name, profile.last_name) if p).strip()
 
 
-async def _resolve_voice_by_name(name: str) -> tuple[Optional[dict], list[str]]:
-    """Look up a HeyGen voice by name. Tries the full string first, then the first word
-    (so "Zain Ul Abdeen" falls back to "Zain"). Returns (voice, available_voice_names),
-    the latter populated only when nothing matched so the caller can show a useful error."""
-    name = (name or "").strip()
-    if not name:
-        return None, []
-    candidates = [name] + ([name.split()[0]] if len(name.split()) > 1 else [])
-    for cand in candidates:
+def _norm_name(s: str) -> str:
+    return " ".join((s or "").split()).lower()
+
+
+async def _resolve_voice(agent_name: str, look: Optional[dict]) -> tuple[Optional[dict], str, list[str]]:
+    """Resolve the HeyGen voice for an agent, in priority order:
+      1) an explicit per-agent pin in settings.heygen_agent_voices (AUTHORITATIVE — this is
+         how you guarantee e.g. "Said" always speaks in Said's cloned voice and never a
+         same-named stock preset);
+      2) the voice HeyGen attached to the chosen avatar look (best-effort — only when the
+         group API actually returns one);
+      3) a name search across the account's voices (full name, then first token).
+
+    Returns (voice_or_None, source, available_voice_names). The name list is filled only
+    when nothing matched, so the caller can show a useful error.
+
+    The old code did only step 3 against the FULL voice library (presets included), so the
+    avatar and the voice were resolved independently and could drift apart — that's the bug
+    where Said's avatar spoke in a stranger's voice.
+    """
+    agent_name = (agent_name or "").strip()
+    if not agent_name:
+        return None, "none", []
+    norm = _norm_name(agent_name)
+    first = norm.split()[0] if norm.split() else ""
+
+    # 1) explicit pin
+    vmap = settings.agent_voice_map
+    pinned = vmap.get(norm) or (vmap.get(first) if first else None)
+    if pinned:
+        return {"voice_id": pinned, "name": f"{agent_name} (pinned)"}, "config-pin", []
+
+    # 2) the look's HeyGen-attached voice
+    look_voice = (look or {}).get("default_voice_id")
+    if look_voice:
+        return {"voice_id": look_voice, "name": f"{agent_name} (avatar voice)"}, "look-attached", []
+
+    # 3) name search across the account voices (full name, then first token)
+    for cand in ([agent_name] + ([agent_name.split()[0]] if len(agent_name.split()) > 1 else [])):
         v = await heygen.find_voice_by_name(cand)
         if v:
-            return v, []
-    return None, [v.get("name", "") for v in (await heygen.list_voices())][:30]
+            return v, "name-match", []
+    return None, "none", [v.get("name", "") for v in (await heygen.list_voices())][:30]
 
 
 def _to_jpeg(img_bytes: bytes) -> Optional[bytes]:
@@ -268,10 +298,9 @@ async def create_promo_video_handler(db: AsyncSession, args: dict, ctx: dict) ->
     look_arg = (args.get("look") or "").strip()
     try:
         looks = await heygen.list_looks_for(target_name)
-        voice, avail_voices = await _resolve_voice_by_name(target_name)
     except heygen.HeyGenError as e:
         log.error("HeyGen lookup failed: %s", e)
-        return {"error": f"Couldn't reach HeyGen to look up avatar/voice: {e}"}
+        return {"error": f"Couldn't reach HeyGen to look up the avatar: {e}"}
 
     if not looks:
         return {"error": f"No avatar found for {target_name!r} in HeyGen. Please create the avatar "
@@ -296,8 +325,18 @@ async def create_promo_video_handler(db: AsyncSession, args: dict, ctx: dict) ->
         }
 
     name_used = target_name
+
+    # Resolve the VOICE *after* the look so we can prefer the voice HeyGen attached to it.
+    # This is what keeps the avatar and voice from drifting apart (the bug where Said's
+    # avatar spoke in a stranger's voice).
+    try:
+        voice, voice_source, avail_voices = await _resolve_voice(target_name, chosen)
+    except heygen.HeyGenError as e:
+        log.error("HeyGen voice lookup failed: %s", e)
+        return {"error": f"Couldn't reach HeyGen to look up the voice: {e}"}
     if voice is None:
-        msg = f"Missing in HeyGen: voice named {target_name!r}. Please create/train it in HeyGen → Voices first."
+        msg = (f"Missing in HeyGen: no voice for {target_name!r}. Train/name a voice for them in "
+               f"HeyGen → Voices, or pin one with HEYGEN_AGENT_VOICES (agent name → voice_id).")
         if avail_voices:
             msg += f"\nVoices currently in the account: {', '.join(v for v in avail_voices if v) or '(none named)'}"
         return {"error": msg}
@@ -373,9 +412,9 @@ async def create_promo_video_handler(db: AsyncSession, args: dict, ctx: dict) ->
     await db.commit()
 
     log.info(
-        "video job started id=%s heygen=%s project=%s by=%s for=%s look=%r avatar=%s photo=%s voice=%s bg=%s tg=%s",
+        "video job started id=%s heygen=%s project=%s by=%s for=%s look=%r avatar=%s photo=%s voice=%s(%s) bg=%s tg=%s",
         video_id, heygen_video_id, project.id, user_id, name_used, chosen["look_name"],
-        chosen["avatar_id"], chosen["is_photo"], voice.get("voice_id"), background_source, tg_chat_id,
+        chosen["avatar_id"], chosen["is_photo"], voice.get("voice_id"), voice_source, background_source, tg_chat_id,
     )
     return {
         "video_id": str(video_id),

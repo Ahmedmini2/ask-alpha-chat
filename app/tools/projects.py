@@ -1,5 +1,5 @@
 from typing import Any
-from sqlalchemy import select, or_, func
+from sqlalchemy import select, or_, func, case
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import Project, ProjectUnit
 from app.tools.registry import Tool, registry
@@ -105,6 +105,18 @@ async def search_projects_handler(db: AsyncSession, args: dict, ctx: dict) -> di
         stmt = stmt.order_by(Project.min_price.desc(), Project.id)
     elif sort == "price_asc":
         stmt = stmt.order_by(Project.min_price.asc(), Project.id)
+    elif query:
+        # Rank NAME matches above projects matched only via their description prose. Without
+        # this, a project whose description merely MENTIONS the query (e.g. "near Damac
+        # Lagoons") could outrank — or hide — the actual project, which is how "Damac Lagoons"
+        # resolved to an unrelated project. exact name → name-prefix → name-contains → desc-only.
+        relevance = case(
+            (Project.name.ilike(query), 0),
+            (Project.name.ilike(f"{query}%"), 1),
+            (Project.name.ilike(f"%{query}%"), 2),
+            else_=3,
+        )
+        stmt = stmt.order_by(relevance, Project.id)
     else:
         stmt = stmt.order_by(Project.id)
 
