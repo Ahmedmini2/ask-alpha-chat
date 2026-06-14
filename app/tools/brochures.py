@@ -6,6 +6,7 @@ developer feed, computed metrics + agent-supplied overrides), renders the
 Allegiance-branded template to PDF with headless Chromium, uploads it to S3,
 and — on Telegram — sends the file straight into the chat.
 """
+import asyncio
 import logging
 
 import httpx
@@ -43,24 +44,37 @@ def _agent_block(profile) -> dict:
     return {"name": name, "initials": initials, "contact_lines": contact_lines}
 
 
-async def _send_telegram_document(chat_id: int, pdf_bytes: bytes, filename: str, caption: str) -> bool:
+async def _send_telegram_document(
+    chat_id: int, file_bytes: bytes, filename: str, caption: str,
+    mime_type: str = "application/pdf",
+) -> bool:
     if not settings.telegram_bot_token:
         return False
     url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendDocument"
-    try:
-        async with httpx.AsyncClient(timeout=60.0) as c:
-            r = await c.post(
-                url,
-                data={"chat_id": str(chat_id), "caption": caption[:1024]},
-                files={"document": (filename, pdf_bytes, "application/pdf")},
-            )
-            if r.status_code >= 400:
-                log.warning("telegram sendDocument failed %s: %s", r.status_code, r.text[:200])
+    # Generous per-phase timeouts for the multipart upload; retry transient transport
+    # errors (a single httpx blip under concurrent load shouldn't lose the file).
+    timeout = httpx.Timeout(connect=15.0, read=120.0, write=120.0, pool=15.0)
+    for attempt in range(3):
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as c:
+                r = await c.post(
+                    url,
+                    data={"chat_id": str(chat_id), "caption": caption[:1024]},
+                    files={"document": (filename, file_bytes, mime_type)},
+                )
+            if r.status_code < 400:
+                return True
+            # 4xx (other than rate-limit) won't recover on retry — give up.
+            log.warning("telegram sendDocument failed %s: %s", r.status_code, r.text[:300])
+            if r.status_code != 429:
                 return False
-            return True
-    except Exception as e:
-        log.warning("telegram sendDocument error: %s", e)
-        return False
+        except Exception as e:
+            # repr() so the type is logged even when str(e) is empty (some httpx
+            # transport errors stringify to "").
+            log.warning("telegram sendDocument error (attempt %d/3): %r", attempt + 1, e)
+        await asyncio.sleep(1.5 * (attempt + 1))
+    log.warning("telegram sendDocument gave up after 3 attempts for chat %s", chat_id)
+    return False
 
 
 async def generate_mini_brochure_handler(db: AsyncSession, args: dict, ctx: dict) -> dict:
@@ -105,9 +119,11 @@ async def generate_mini_brochure_handler(db: AsyncSession, args: dict, ctx: dict
         )
 
     if not delivered and not pdf_url:
+        why = ("Telegram delivery failed" if tg_chat_id else "no Telegram chat is linked")
         return {"error": "Brochure was rendered but could not be delivered: S3 upload "
-                         "failed and no Telegram chat is linked. Ask an admin to grant "
-                         "s3:PutObject on the assets bucket."}
+                         f"was denied and {why}. The S3 download link needs an admin to "
+                         "grant s3:PutObject on the assets bucket; until then delivery "
+                         "relies on Telegram. Please try again."}
 
     filled = sum(1 for n in context["numbers"] if n["v"] != "—")
     missing = [n["k"] for n in context["numbers"] if n["v"] == "—"]

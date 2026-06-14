@@ -100,11 +100,10 @@ def _format_cards(cards: list[dict]) -> str:
                     dev = p.get("developer") or ""
                     lines.append(f"  • *{p.get('name')}* ({dev}, {loc}){price}")
         elif kind == "video_job":
-            lines.append(
-                f"\n🎬 *Video job started* — id `{c.get('video_id')}` "
-                f"(status: {c.get('status')}). It usually takes 1–2 minutes. "
-                f"Ask _\"is my video ready?\"_ to check."
-            )
+            # No extra text: STEP 5's own reply already says the video is generating and the
+            # captioned link will arrive automatically. The poller posts the link as its own
+            # message when ready, so adding a card here would just clutter that single message.
+            pass
         elif kind == "video_status":
             status = c.get("status")
             if status == "completed" and c.get("video_url"):
@@ -136,6 +135,16 @@ def _format_cards(cards: list[dict]) -> str:
             # the tool handler, and the assistant's own text asks the question — so nothing to
             # render here. Kept as an explicit branch so the card isn't silently dropped.
             pass
+        elif kind == "inventory_export":
+            label = c.get("label") or "Inventory"
+            n = c.get("row_count")
+            cap = " (capped — narrow the filters for the rest)" if c.get("truncated") else ""
+            if c.get("sent_to_telegram"):
+                lines.append(f"\n📊 *{label}* — {n} units sent above as an Excel sheet{cap}.")
+            elif c.get("xlsx_url"):
+                lines.append(f"\n📊 *{label}* — {n} units.\nDownload (Excel): {c.get('xlsx_url')}{cap}")
+            else:
+                lines.append(f"\n📊 The {label} export could not be delivered — please try again.")
         elif kind == "comparison_pdf":
             names = c.get("project_names") or []
             title = " vs ".join(names) if names else "Property comparison"
@@ -277,23 +286,32 @@ async def on_text(update: Update, _ctx: ContextTypes.DEFAULT_TYPE):
         )
         CHAT_CONV[chat_id] = result["conversation_id"]
 
+    # A successfully-started video job is delivered as ONE message by the poller when the
+    # captioned video is ready — so suppress the assistant's "it's generating…" acknowledgment
+    # here. Otherwise the agent would get two messages (the ack now + the link later); they
+    # only want the final captioned link.
+    cards = result.get("cards") or []
+    if any(c.get("type") == "video_job" for c in cards):
+        return
+
     reply = result["reply"] or "(no reply)"
     extras = _format_cards(result["cards"])
 
-    # Send LLM body as plain text — Claude's stray markdown can break Telegram's parser.
-    for chunk_start in range(0, len(reply), 4000):
+    # ONE message per turn: combine the assistant's body with any card text and send it once
+    # (previously the body and the cards went out as two separate messages). Try Markdown for the
+    # card formatting; on any parser error, resend the SAME text as plain — still a single message.
+    # Only the rare >4000-char turn is chunked.
+    full = reply + ("\n" + extras if extras else "")
+    for chunk_start in range(0, len(full), 4000):
+        chunk = full[chunk_start:chunk_start + 4000]
         try:
-            await update.message.reply_text(reply[chunk_start:chunk_start + 4000])
+            await update.message.reply_text(chunk, parse_mode="Markdown")
         except Exception as e:  # pragma: no cover — keep the chat alive
-            log.warning("reply_text failed; sending stripped fallback: %s", e)
-            await update.message.reply_text(reply[chunk_start:chunk_start + 4000].encode("ascii", "ignore").decode())
-
-    if extras:
-        try:
-            await update.message.reply_text(extras, parse_mode="Markdown")
-        except Exception as e:
-            log.warning("cards reply with Markdown failed, retrying plain: %s", e)
-            await update.message.reply_text(extras)
+            log.warning("markdown send failed; resending plain: %s", e)
+            try:
+                await update.message.reply_text(chunk)
+            except Exception:
+                await update.message.reply_text(chunk.encode("ascii", "ignore").decode())
 
 
 async def cmd_logout(update: Update, _ctx: ContextTypes.DEFAULT_TYPE):

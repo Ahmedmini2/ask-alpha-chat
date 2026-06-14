@@ -608,7 +608,7 @@ async def build_context(
             cheapest_group and cheapest_group["price_from"]
             and entry_price == cheapest_group["price_from"]
         )
-        area_inputs = await metrics.gather_area_inputs(db, project)
+        area_inputs = await metrics.gather_area_inputs(project)
         m = metrics.compute_metrics(
             entry_price,
             beds=cheapest_group["bedrooms"] if from_entry_group else None,

@@ -19,6 +19,7 @@ import app.tools.pois        # noqa: F401
 import app.tools.property_monitor_tools  # noqa: F401
 import app.tools.analysis    # noqa: F401
 import app.tools.investment_metrics  # noqa: F401
+import app.tools.inventory_export   # noqa: F401
 import app.tools.documents   # noqa: F401
 import app.tools.videos      # noqa: F401
 import app.tools.brochures   # noqa: F401
@@ -134,6 +135,15 @@ include the gist of the returned `basis` (real area data is used where we have i
 with a Dubai baseline for unmodeled communities — note when used_area_fallback is true). This is the ONE place \
 you may surface a yield/appreciation number without the agent stating it, because it comes from this tool — \
 still never invent or adjust the numbers yourself.
+- EXPORT TO EXCEL: when the user asks to export / download / "give me an Excel (or spreadsheet / \
+sheet / xlsx)" of the available inventory or available units — or to put the units they're looking \
+at into a file — use export_inventory_excel. Pass the SAME filters they searched with (unit_type, \
+bedrooms_min/max, min/max_unit_price, min/max_size, location) and/or project_name to export one \
+project's full inventory; it builds one row per available unit. After it returns, share xlsx_url so \
+it can be downloaded; on Telegram say the spreadsheet file has been sent (sent_to_telegram). If it \
+reports truncated=true, tell them it was capped and to narrow the filters for the rest. This exports \
+the FULL matching set (not just the 5 shown in chat), so reach for it whenever someone wants the list \
+as a file rather than read out in the reply.
 - For questions about a DEVELOPER — their track record, reputation, portfolio, or reliability — use \
 get_developer_profile (by developer_name).
 - For FINANCIAL CALCULATIONS use the dedicated calculators rather than doing math yourself: \
@@ -177,39 +187,45 @@ sold out, or no longer available for sale; agents routinely promote completed an
 developments. As long as the project resolves (INCLUDING when it comes back only as the top/near-exact \
 search suggestion rather than an exact match), proceed with the video — only offer other projects if \
 the user explicitly asks for them. Sale status is NOT a gate on create_promo_video.
-- Make sure the project you pass to list_avatar_looks / create_promo_video is the one the user \
-actually named. search_projects ranks NAME matches first — pick the top NAME match, never a project \
-that only mentions the query in its description. If the name matches several phases of a master \
-community (e.g. several "Damac Lagoons – …" results), ask which specific phase before generating; \
-NEVER silently substitute a different project.
-- If the user asks for a "promo video", "marketing video", "AI video" or similar about a project, \
-this is a TWO-STEP flow — the avatar has multiple "looks" (appearances) and the agent picks one first:
-    1. FIRST call list_avatar_looks (pass project_id, and agent_name when the video is for a teammate). \
-Do NOT call create_promo_video yet. On Telegram it sends a preview photo per look; reply by listing the \
-look NAMES (never the URLs) and ask which to use — e.g. "Which look should I use? Dubai Executive, The \
-Golf Concierge, or Dapper Gentleman at Sunset?". If it returns status 'single_look', skip the question \
-and go to step 2. If the agent already named a look in their request, also skip to step 2 with that look.
-    2. After the agent replies with a look name (it's in your previous message — map their reply to one \
-of those names), call create_promo_video with project_id + look (+ agent_name if for a teammate). If it \
-returns needs_look_choice or "Couldn't match look", show the available look names it returned and ask \
-again — never guess a look.
-  Both tools are restricted to agents and return an error for anonymous users — when that happens, tell \
-the user they need to sign in as an agent. After a successful create_promo_video, tell the user the video \
-is being generated and will be ready in 1–2 minutes; on Telegram the bot will push the download link \
-automatically when ready, so they don't need to ask again.
-- Do NOT write the narration yourself. Leave the `script` argument EMPTY so the tool writes it \
-in our house Hook/Value/CTA style. Only pass `script` \
-when the user dictates the exact wording they want read verbatim ("say exactly: ...", "use this \
-script: ..."). Otherwise omit it.
-- The user can dispatch videos on behalf of teammates. If they say "make a video for Rami about \
-project X", "for Sarah", "in Zain's voice", etc., pass `agent_name` to create_promo_video set \
-to that name. The tool resolves it to a HeyGen avatar+voice. If omitted, it uses the requester's \
-own name.
-- If the user requests MULTIPLE videos in one message (e.g. "make one for Rami on Damac Island \
-and one for Zain on Monte Carlo"), the look step still applies per agent: unless they named a look \
-for each (or each avatar is single_look), call list_avatar_looks for each agent first and ask them to \
-pick a look per video. Once the looks are settled, call create_promo_video MULTIPLE TIMES in the same \
-response — once per video. Each call runs independently; HeyGen renders them in parallel.
+- IDENTIFY THE PROJECT BY NAME, NOT BY A REMEMBERED ID. Both list_avatar_looks and create_promo_video \
+take a `project_name` — pass the EXACT name the user picked from the search list (e.g. "Farm Gardens \
+Villas"), copied verbatim. The server resolves it. Do NOT append the developer/city to it (that breaks \
+the match), do NOT re-run search_projects after the user has already picked, and NEVER pass a numeric \
+project_id you are not 100% certain of — guessing an id is how the wrong project ("Verdana 4" instead \
+of "Farm Gardens Villas") gets a video. search_projects ranks NAME matches first, so when you DO search, \
+pick the top NAME match, never a project that only mentions the query in its description. If a name still \
+matches several phases of a master community, ask which specific phase before generating; NEVER silently \
+substitute a different project.
+- PROMO VIDEO — a strict, interactive 5-STEP flow. When the user asks for a "promo video", \
+"marketing video", "AI video" or similar, walk these steps IN ORDER, ONE AT A TIME, waiting for \
+the agent's reply between steps. Never skip ahead, and NEVER call create_promo_video before STEP 5.
+    STEP 1 — PROJECT: establish the project. If they named it, resolve it (search_projects, pick \
+the top NAME match; if several phases of a master community match, ask which one). Carry the EXACT \
+chosen name forward as `project_name` in every later call — never re-search with developer/city \
+appended, never guess a numeric id.
+    STEP 2 — LOOK: call list_avatar_looks (project_name; + agent_name if the video is for a \
+teammate). On Telegram it pushes one preview photo per look; reply by listing the look NAMES (never \
+URLs) and ask which to use. If it returns 'single_look', skip the question and move on. Wait for \
+the agent to choose a look.
+    STEP 3 — SCRIPT: call draft_video_scripts (project_name). Present the returned variations as \
+"Option 1 / Option 2 / Option 3", quoting EACH script in full, and ask which one they want — or \
+what to change. If the agent asks for edits or gives extra info, apply it yourself to the chosen \
+script and show the FINAL script back to them. Land on exactly one final script.
+    STEP 4 — CONFIRM: ask, verbatim, "Are you sure you want to generate the video with this \
+script?" Do NOT generate yet. Proceed only when the agent clearly signs off ("yes", "go ahead", \
+"confirm", "approved", "do it", etc.). If they ask for more changes instead, loop back to STEP 3.
+    STEP 5 — GENERATE: NOW call create_promo_video with project_name + look + script (the final \
+agreed script, passed verbatim) + agent_name if for a teammate. After it returns, send ONE single \
+message: tell them the video is generating and the captioned download link will arrive on Telegram \
+automatically when ready. Do not send a second message.
+  Both tools are agents-only (anonymous users get an error → tell them to sign in). If \
+create_promo_video returns needs_look_choice or "Couldn't match look", show the look names it \
+returned and re-ask — never guess a look.
+- Dispatch on behalf of teammates: if they say "make a video for Rami", "for Sarah", "in Zain's \
+voice", pass `agent_name` (the teammate's name) to list_avatar_looks / draft_video_scripts / \
+create_promo_video at every step. If omitted, the requesting agent's own avatar + voice is used.
+- The script passed to create_promo_video is ALWAYS the one agreed in STEP 3 — pass it verbatim as \
+`script`. Do not invent or re-write a different script at generation time.
 - When the user describes a desired background in the same message ("with Burj Khalifa", \
 "in front of a glass window showing the Dubai skyline", "with Palm Jumeirah behind me"), \
 pass that description to create_promo_video as `background_prompt`. Expand vague hints into \
@@ -333,6 +349,10 @@ def _summarize_tool_result(name: str, result: dict) -> str:
         return f"invest {result.get('name')!r} vs_market={result.get('valuation_vs_market')} premium={result.get('premium_to_market_pct')}%"
     if name == "compare_projects":
         return f"compared {result.get('count', 0)} projects"
+    if name == "export_inventory_excel":
+        return (f"export {result.get('label')!r} rows={result.get('row_count')} "
+                f"status={result.get('status')} telegram={result.get('sent_to_telegram')} "
+                f"url?={bool(result.get('xlsx_url'))}")
     if name == "get_investment_metrics":
         if not result.get("found"):
             return "no metrics"
@@ -358,6 +378,8 @@ def _summarize_tool_result(name: str, result: dict) -> str:
     if name == "list_avatar_looks":
         return (f"status={result.get('status')} agent={result.get('agent_name')!r} "
                 f"count={result.get('count')} telegram={result.get('sent_to_telegram')}")
+    if name == "draft_video_scripts":
+        return f"project={result.get('project_name')!r} scripts={result.get('count')}"
     if name == "check_my_video_status":
         return f"video_id={result.get('video_id')} status={result.get('status')} url?={bool(result.get('video_url'))}"
     if name == "generate_mini_brochure":
@@ -415,6 +437,17 @@ def _build_cards(tool_calls: list[dict]) -> list[dict]:
         elif name == "compare_projects":
             if result.get("found"):
                 cards.append({"type": "investment_comparison", "items": result.get("projects", [])})
+        elif name == "export_inventory_excel":
+            if result.get("status") == "completed":
+                cards.append({
+                    "type": "inventory_export",
+                    "label": result.get("label"),
+                    "row_count": result.get("row_count"),
+                    "xlsx_url": result.get("xlsx_url"),
+                    "filename": result.get("filename"),
+                    "sent_to_telegram": result.get("sent_to_telegram"),
+                    "truncated": result.get("truncated"),
+                })
         elif name == "get_investment_metrics":
             if result.get("found"):
                 cards.append({
@@ -574,23 +607,38 @@ async def chat_turn(
     Returns: {"reply", "conversation_id", "message_id", "cards"}.
     """
     conv = await _get_or_create_conversation(db, conversation_id, user_id, first_text=user_message)
-    history = await _load_history(db, conv.id)
-    await _insert_message(db, conv.id, "user", user_message, cards=None)
+    # Snapshot the id NOW. If any tool raises mid-turn, _run_tool_loop rolls the
+    # session back to recover the aborted transaction — and a rollback EXPIRES every
+    # ORM object in the session (expire_on_commit=False only covers commits, not
+    # rollbacks). Touching `conv.id` afterwards would trigger a lazy refresh, which
+    # is synchronous DB IO outside a greenlet → "greenlet_spawn has not been called".
+    # Carrying a plain UUID past the tool loop avoids that entirely.
+    conv_id = conv.id
+    history = await _load_history(db, conv_id)
+    await _insert_message(db, conv_id, "user", user_message, cards=None)
 
     messages = history + [{"role": "user", "content": [{"text": user_message}]}]
     ctx = {
         "user_id": user_id,
         "channel": channel,
-        "conversation_id": conv.id,
+        "conversation_id": conv_id,
         "telegram_chat_id": telegram_chat_id,
     }
     reply_text, tool_calls = await _run_tool_loop(db, messages, ctx)
     cards = _build_cards(tool_calls)
 
-    asst = await _insert_message(db, conv.id, "assistant", reply_text or "", cards=cards or None)
+    try:
+        asst = await _insert_message(db, conv_id, "assistant", reply_text or "", cards=cards or None)
+    except Exception:
+        # A tool that caught its own DB error (returning {"error": ...} instead of
+        # raising) can leave the transaction aborted without the loop's rollback
+        # firing. Recover the session and persist the reply so the turn still
+        # completes instead of surfacing as a 500 "Chat error".
+        await db.rollback()
+        asst = await _insert_message(db, conv_id, "assistant", reply_text or "", cards=cards or None)
     return {
         "reply": reply_text or "",
-        "conversation_id": conv.id,
+        "conversation_id": conv_id,
         "message_id": asst.id,
         "cards": cards,
     }

@@ -27,6 +27,8 @@ from typing import Any, Optional
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.session import AsyncSessionLocal
+
 log = logging.getLogger("askalpha.metrics")
 
 SQM_PER_SQFT = 10.7639
@@ -234,11 +236,13 @@ BASIS = (
 async def _area_yield_band(db: AsyncSession, project_id: int) -> Optional[float]:
     """Midpoint of the real gross-yield band for the project's dominant unit type,
     as a decimal. Falls back to the 'default' band, then None."""
-    row = (await db.execute(text("""
-        SELECT mode() WITHIN GROUP (ORDER BY lower(unit_type)) AS t
+    # NB: read with .scalar() — never alias the column 't', which collides with the
+    # deprecated Row.t tuple accessor and silently returns the whole Row.
+    dom = (await db.execute(text("""
+        SELECT mode() WITHIN GROUP (ORDER BY lower(unit_type))
         FROM project_units WHERE project_id = :id AND unit_type IS NOT NULL
-    """), {"id": project_id})).first()
-    dom = (row.t if row else None) or "default"
+    """), {"id": project_id})).scalar()
+    dom = (dom if isinstance(dom, str) else None) or "default"
     yr = (await db.execute(text("""
         SELECT gross_yield_low, gross_yield_high FROM investment_yield_assumptions
         WHERE property_type = :t
@@ -281,46 +285,42 @@ async def _apply_sentiment(db: AsyncSession, area: str, out: dict) -> None:
         out["momentum_pct"] = s.get("rate_momentum_pct")
 
 
-async def gather_area_inputs(db: AsyncSession, project) -> dict:
+async def gather_area_inputs(project) -> dict:
     """Pull the real-data overrides for a project. Always returns a dict with the
     same keys (values None when unavailable) so it can be splatted straight into
-    ``compute_metrics``. Never raises — a DB hiccup just means we fall back to the
-    table values."""
+    ``compute_metrics``. Never raises.
+
+    Runs on its OWN session so an enrichment failure (e.g. a bad query aborting the
+    transaction) can never poison the caller's transaction or expire its ORM
+    objects — a DB hiccup just means we fall back to the area-table values."""
     out = {"area_yield": None, "area_appreciation": None, "area_ppsf": None,
            "activity_label": None, "momentum_pct": None}
     try:
-        out["area_yield"] = await _area_yield_band(db, project.id)
-        await _apply_sentiment(db, project.district or project.city or "", out)
+        async with AsyncSessionLocal() as s:
+            out["area_yield"] = await _area_yield_band(s, project.id)
+            await _apply_sentiment(s, project.district or project.city or "", out)
     except Exception as e:
-        # A failed SELECT can abort the surrounding transaction; reset it so the
-        # caller's later reads/writes still go through.
         log.warning("gather_area_inputs failed for project %s: %s", getattr(project, "id", "?"), e)
-        try:
-            await db.rollback()
-        except Exception:
-            pass
     return out
 
 
-async def gather_area_inputs_by_area(db: AsyncSession, area: str) -> dict:
+async def gather_area_inputs_by_area(area: str) -> dict:
     """Like gather_area_inputs but for a bare area name (no project). Uses the
-    'default' yield band since we have no unit mix to pick a dominant type."""
+    'default' yield band since we have no unit mix to pick a dominant type. Runs on
+    its own session for the same isolation reasons."""
     out = {"area_yield": None, "area_appreciation": None, "area_ppsf": None,
            "activity_label": None, "momentum_pct": None}
     try:
-        yr = (await db.execute(text("""
-            SELECT gross_yield_low, gross_yield_high FROM investment_yield_assumptions
-            WHERE property_type = 'default'
-        """))).mappings().first()
-        if yr:
-            lo, hi = _f(yr["gross_yield_low"]), _f(yr["gross_yield_high"])
-            if lo is not None and hi is not None:
-                out["area_yield"] = (lo + hi) / 2.0 / 100.0
-        await _apply_sentiment(db, area or "", out)
+        async with AsyncSessionLocal() as s:
+            yr = (await s.execute(text("""
+                SELECT gross_yield_low, gross_yield_high FROM investment_yield_assumptions
+                WHERE property_type = 'default'
+            """))).mappings().first()
+            if yr:
+                lo, hi = _f(yr["gross_yield_low"]), _f(yr["gross_yield_high"])
+                if lo is not None and hi is not None:
+                    out["area_yield"] = (lo + hi) / 2.0 / 100.0
+            await _apply_sentiment(s, area or "", out)
     except Exception as e:
         log.warning("gather_area_inputs_by_area failed for %r: %s", area, e)
-        try:
-            await db.rollback()
-        except Exception:
-            pass
     return out

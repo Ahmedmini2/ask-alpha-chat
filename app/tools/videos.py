@@ -134,6 +134,49 @@ async def _write_campaign_script(project: Project) -> str:
     return await asyncio.to_thread(_call)
 
 
+# Distinct lead angles so the three drafted variations actually differ.
+_SCRIPT_ANGLES = (
+    "Angle for THIS version: lead with the lifestyle and the standout amenities.",
+    "Angle for THIS version: lead with the investment case — entry price, payment plan, value.",
+    "Angle for THIS version: lead with the location and the nearby landmarks.",
+)
+
+
+async def _write_campaign_scripts(project: Project) -> list[str]:
+    """Draft up to three DISTINCT script variations (one per lead angle) for the agent to choose
+    from. Each uses the same house CAMPAIGN_SCRIPT_SYSTEM_PROMPT; only the opening angle differs.
+    Runs the calls concurrently."""
+    brief = _campaign_brief(project)
+
+    def _call(angle: str) -> str:
+        resp = _bedrock.converse(
+            modelId=settings.bedrock_model_id,
+            system=[{"text": CAMPAIGN_SCRIPT_SYSTEM_PROMPT}],
+            messages=[{
+                "role": "user",
+                "content": [{"text":
+                    "Write the spoken script from this brief. Only use facts present below; "
+                    "omit anything missing. Output the narration as one continuous paragraph "
+                    "with no labels.\n\n" + angle + "\n\n" + brief
+                }],
+            }],
+            inferenceConfig={"maxTokens": 600, "temperature": 0.8},
+        )
+        for block in resp["output"]["message"]["content"]:
+            if "text" in block:
+                return block["text"].strip()
+        return ""
+
+    results = await asyncio.gather(
+        *[asyncio.to_thread(_call, a) for a in _SCRIPT_ANGLES], return_exceptions=True
+    )
+    scripts: list[str] = []
+    for r in results:
+        if isinstance(r, str) and r and r not in scripts:  # drop blanks + exact dupes
+            scripts.append(r)
+    return scripts
+
+
 def _compose_background_prompt(project: Project, user_prompt: str) -> str:
     """Build the text-to-image prompt for the 9:16 background plate that HeyGen composites
     the avatar in front of. Describe the SCENE ONLY — no people — and always append a
@@ -268,6 +311,52 @@ async def _send_telegram_photo(chat_id: int, image_bytes: bytes, caption: str) -
         return False
 
 
+async def _resolve_project(db: AsyncSession, args: dict) -> tuple[Optional[Project], Optional[dict]]:
+    """Resolve the target project. `project_name` is AUTHORITATIVE — it's the literal name the
+    agent picked, so (unlike a numeric id the model has to recall across turns) it can't drift
+    to a different project. Exact case-insensitive name match wins; a unique containment match
+    is accepted; anything ambiguous or missing returns an error rather than guessing — that's
+    what stops "Farm Gardens Villas" from rendering as "Verdana 4". Falls back to project_id
+    only when no name is given. Returns (project, error_dict); exactly one is non-None."""
+    name = (args.get("project_name") or "").strip()
+    project_id = args.get("project_id")
+
+    # The UI lists results as "Name (Developer, City)" — if the model passes that label
+    # verbatim, drop the trailing parenthetical so the bare name still matches.
+    if name.endswith(")") and "(" in name:
+        name = name[:name.rfind("(")].strip()
+
+    if name:
+        exact = (await db.execute(select(Project).where(Project.name.ilike(name)))).scalars().all()
+        if len(exact) == 1:
+            return exact[0], None
+        if len(exact) > 1:
+            return None, {"error": f"Several projects are named {name!r}: "
+                          + ", ".join(f"{p.name} (id {p.id})" for p in exact[:6])
+                          + ". Ask which one, then pass its exact name or project_id."}
+        like = (await db.execute(
+            select(Project).where(Project.name.ilike(f"%{name}%")).limit(6)
+        )).scalars().all()
+        if len(like) == 1:
+            return like[0], None
+        if len(like) > 1:
+            return None, {"error": f"{name!r} matches several projects: "
+                          + ", ".join(p.name for p in like)
+                          + ". Ask the agent which one and pass that exact name."}
+        return None, {"error": f"No project named {name!r} in our system. Search first, then "
+                               "pass the exact name the agent picks."}
+
+    if project_id:
+        p = (await db.execute(
+            select(Project).where(Project.id == int(project_id))
+        )).scalar_one_or_none()
+        if p is None:
+            return None, {"error": f"No project found with id {project_id}"}
+        return p, None
+
+    return None, {"error": "Provide project_name (preferred — the exact name the agent picked) or project_id."}
+
+
 async def create_promo_video_handler(db: AsyncSession, args: dict, ctx: dict) -> dict:
     user_id = ctx.get("user_id")
     if user_id is None:
@@ -286,14 +375,9 @@ async def create_promo_video_handler(db: AsyncSession, args: dict, ctx: dict) ->
     if not target_name:
         return {"error": "No name to resolve avatar/voice. Provide agent_name or set first/last name on your profile."}
 
-    project_id = args.get("project_id")
-    if not project_id:
-        return {"error": "project_id is required"}
-    project = (await db.execute(
-        select(Project).where(Project.id == int(project_id))
-    )).scalar_one_or_none()
-    if project is None:
-        return {"error": f"No project found with id {project_id}"}
+    project, project_err = await _resolve_project(db, args)
+    if project_err:
+        return project_err
 
     look_arg = (args.get("look") or "").strip()
     try:
@@ -379,10 +463,10 @@ async def create_promo_video_handler(db: AsyncSession, args: dict, ctx: dict) ->
             background_url=background_url,
             resolution="1080p",
             aspect_ratio="9:16",
-            # Emit a CLEAN video (no HeyGen burn-in). HeyGen's own captions are
-            # un-positionable and ran off-screen, so they're disabled here. NOTE: the
-            # Remotion caption post-step was removed — until a replacement lands, videos
-            # ship with NO captions. Flip to caption=True for HeyGen's built-in ones.
+            # Emit a CLEAN video (no HeyGen burn-in). Captions are added afterward by the
+            # Descript post-step in the poller (when DESCRIPT_API_TOKEN is set); HeyGen's own
+            # captions are un-positionable and ran off-screen, so they stay off here. If you
+            # ever drop Descript, flip to caption=True for HeyGen's built-in captions.
             caption=False,
             is_photo=chosen["is_photo"],
         )
@@ -447,15 +531,25 @@ registry.register(Tool(
         "IMPORTANT: do NOT call this until the agent has chosen an avatar look — first call "
         "list_avatar_looks and ask them which look to use, then pass it as `look`. (If the "
         "avatar has only one look, list_avatar_looks returns single_look and you may call this "
-        "directly.) If the user only describes the project by name, first call search_projects "
-        "to get the numeric project_id."
+        "directly.) Identify the project by NAME via project_name — pass the EXACT name the agent "
+        "picked from the search_projects results (e.g. 'Farm Gardens Villas'); the server resolves "
+        "it. Do NOT re-search with the developer/city appended and do NOT guess a numeric id — that "
+        "is how the wrong project gets promoted."
     ),
     input_schema={
         "type": "object",
         "properties": {
+            "project_name": {
+                "type": "string",
+                "description": (
+                    "Preferred. The EXACT project name the agent chose from search results, e.g. "
+                    "'Farm Gardens Villas'. The server resolves it (exact name match). Use this "
+                    "rather than a numeric id you'd have to recall across turns."
+                ),
+            },
             "project_id": {
                 "type": "integer",
-                "description": "Numeric project ID to promote.",
+                "description": "Numeric project ID — only if you already have it from search. Never guess it.",
             },
             "agent_name": {
                 "type": "string",
@@ -492,9 +586,69 @@ registry.register(Tool(
                 ),
             },
         },
-        "required": ["project_id"],
+        "required": [],
     },
     handler=create_promo_video_handler,
+))
+
+
+async def draft_video_scripts_handler(db: AsyncSession, args: dict, ctx: dict) -> dict:
+    user_id = ctx.get("user_id")
+    if user_id is None:
+        return {"error": "Sign in required. This feature is only for our agents."}
+    profile = await get_profile(db, user_id)
+    if not is_agent(profile):
+        return {"error": "This feature is only available to agents."}
+
+    project, project_err = await _resolve_project(db, args)
+    if project_err:
+        return project_err
+
+    scripts = await _write_campaign_scripts(project)
+    if not scripts:
+        return {"error": "Couldn't draft scripts just now — try again."}
+    return {
+        "project_id": project.id,
+        "project_name": project.name,
+        "count": len(scripts),
+        "scripts": scripts,
+        "message": (
+            "Present these to the agent as Option 1 / Option 2 / Option 3 (quote each in full) "
+            "and ask which to use or what to change. Do NOT generate the video yet."
+        ),
+    }
+
+
+registry.register(Tool(
+    name="draft_video_scripts",
+    description=(
+        "Draft three short narration-script VARIATIONS for a project's promo video so the agent "
+        "can pick one before anything is generated. Call this at the SCRIPT step of the promo-video "
+        "flow — after the agent has chosen an avatar look, before create_promo_video. Returns a "
+        "`scripts` array (3 distinct variations in our house Hook/Value/CTA style). Present them as "
+        "Option 1/2/3, quote each in full, and ask the agent which to use (or what to edit). Apply "
+        "any edits yourself, confirm the final script, and only then call create_promo_video with "
+        "that script. Agents only."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "project_name": {
+                "type": "string",
+                "description": "The EXACT project name the agent picked (e.g. 'Damac Hills'). Preferred.",
+            },
+            "project_id": {
+                "type": "integer",
+                "description": "Numeric project id, only if you already have it. Prefer project_name.",
+            },
+            "agent_name": {
+                "type": "string",
+                "description": "Optional: the teammate the video is for (unused for scripts today, accepted for symmetry).",
+            },
+        },
+        "required": [],
+    },
+    handler=draft_video_scripts_handler,
 ))
 
 
@@ -515,6 +669,7 @@ async def list_avatar_looks_handler(db: AsyncSession, args: dict, ctx: dict) -> 
     if not target_name:
         return {"error": "No name to resolve an avatar. Provide agent_name or set first/last name on your profile."}
     project_id = args.get("project_id")
+    project_name = args.get("project_name")  # carried through to create_promo_video
 
     try:
         looks = await heygen.list_looks_for(target_name)
@@ -531,6 +686,7 @@ async def list_avatar_looks_handler(db: AsyncSession, args: dict, ctx: dict) -> 
             "status": "single_look",
             "agent_name": target_name,
             "project_id": project_id,
+            "project_name": project_name,
             "look": {"name": looks[0]["look_name"]},
             "count": 1,
             "message": f"{target_name} has a single avatar look — no choice needed; you can generate directly.",
@@ -557,6 +713,7 @@ async def list_avatar_looks_handler(db: AsyncSession, args: dict, ctx: dict) -> 
         "status": "looks_listed",
         "agent_name": target_name,
         "project_id": project_id,
+        "project_name": project_name,
         "count": len(shown),
         "total_available": len(looks),
         "truncated": len(looks) > len(shown),
@@ -574,8 +731,8 @@ registry.register(Tool(
         "preview photo per look (the look's name as the caption); on web it returns the looks with "
         "preview image URLs. Your reply should LIST THE LOOK NAMES (not the URLs) and ask which to use. "
         "If it returns status 'single_look', skip the question and call create_promo_video directly. "
-        "Identify the person with agent_name (defaults to the requester); pass project_id through so "
-        "you remember which project the video is for. Agents only."
+        "Identify the person with agent_name (defaults to the requester); pass project_name (the exact "
+        "name the agent picked) through so you carry the right project into create_promo_video. Agents only."
     ),
     input_schema={
         "type": "object",
@@ -587,9 +744,13 @@ registry.register(Tool(
                     "'Ramy Nabil'). Omit to use the requesting agent's own name."
                 ),
             },
+            "project_name": {
+                "type": "string",
+                "description": "The EXACT project name the video is about — pass it through so the follow-up create_promo_video uses the right project.",
+            },
             "project_id": {
                 "type": "integer",
-                "description": "The project the video will be about — pass it through so it's remembered for the follow-up.",
+                "description": "Numeric project id, only if you already have it. Prefer project_name.",
             },
         },
         "required": [],
@@ -628,14 +789,19 @@ async def check_my_video_status_handler(db: AsyncSession, args: dict, ctx: dict)
     if v.project_id is not None:
         p = (await db.execute(select(Project.name).where(Project.id == v.project_id))).scalar_one_or_none()
         project_name = p
+    # Prefer the captioned version when it's ready; fall back to the raw HeyGen video.
+    share_url = v.captioned_video_url or v.video_url
     return {
         "video_id": str(v.id),
         "status": v.status,
-        "video_url": v.video_url,
+        "video_url": share_url,
+        "raw_video_url": v.video_url,
+        "captioned_video_url": v.captioned_video_url,
+        "caption_status": v.caption_status,
         "thumbnail_url": v.thumbnail_url,
         "project_id": v.project_id,
         "project_name": project_name,
-        "error_detail": v.error,
+        "error_detail": v.error or v.caption_error,
         "created_at": v.created_at.isoformat() if v.created_at else None,
         "completed_at": v.completed_at.isoformat() if v.completed_at else None,
     }

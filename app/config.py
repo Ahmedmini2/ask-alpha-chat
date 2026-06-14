@@ -45,6 +45,25 @@ class Settings(BaseSettings):
     heygen_video_width: int = 1080
     heygen_video_height: int = 1920
 
+    # Descript API (optional caption post-step). When a token is set, the poller sends each
+    # finished HeyGen video through Descript: import -> Underlord agent adds captions ->
+    # publish -> deliver the captioned MP4. If unset, videos ship uncaptioned. Token from
+    # Descript -> API (https://docs.descriptapi.com). Best-effort: any failure falls back to
+    # the raw HeyGen video. NOTE: the agent controls caption STYLE (no Hormozi template
+    # selector in the API) — tune the wording here to get as close as Descript allows.
+    descript_api_token: str = ""
+    descript_caption_prompt: str = (
+        "Add bold, animated, word-by-word karaoke-style captions to the entire video — "
+        "large, centered, in the lower third, one or two words highlighted at a time. "
+        "Do not change anything else about the video."
+    )
+    descript_caption_resolution: str = "1080p"
+    descript_caption_concurrency: int = 1  # Descript jobs are heavy; default one at a time
+    # Publish access level: the drive permits public / unlisted / private (NOT "drive").
+    # "private" still yields a signed, time-limited download_url we deliver via Telegram,
+    # without creating a public share page.
+    descript_caption_access_level: str = "private"
+
     # Telegram bot
     telegram_bot_token: str = ""
 

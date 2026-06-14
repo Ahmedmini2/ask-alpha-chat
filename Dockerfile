@@ -35,4 +35,9 @@ ENTRYPOINT ["/usr/bin/tini", "--"]
 
 # Default command runs the API. The Telegram bot service overrides this in Railway:
 #   python -m app.integrations.telegram.bot
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+#
+# --loop asyncio (NOT uvloop): under uvloop the SQLAlchemy+asyncpg engine breaks the
+# background HeyGen poller's DB access (greenlet/uvloop interaction) — the poll loop hangs
+# silently after startup, so videos never get Descript captions and ship as raw HeyGen links.
+# asyncio is the reliable loop here; the perf delta is irrelevant at this app's scale.
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --loop asyncio"]

@@ -88,10 +88,10 @@ async def get_investment_metrics_handler(db: AsyncSession, args: dict, ctx: dict
         beds = beds if beds is not None else eb
         sqft = sqft if sqft is not None else es
         community = args.get("community") or project.district or project.city
-        area_inputs = await metrics.gather_area_inputs(db, project)
+        area_inputs = await metrics.gather_area_inputs(project)
     else:
         community = args.get("community")
-        area_inputs = await metrics.gather_area_inputs_by_area(db, community or "")
+        area_inputs = await metrics.gather_area_inputs_by_area(community or "")
 
     if not price or price <= 0:
         return {"found": False, "message": (
