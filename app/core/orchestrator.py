@@ -232,9 +232,9 @@ of "Farm Gardens Villas") gets a video. search_projects ranks NAME matches first
 pick the top NAME match, never a project that only mentions the query in its description. If a name still \
 matches several phases of a master community, ask which specific phase before generating; NEVER silently \
 substitute a different project.
-- PROMO VIDEO — a strict, interactive 5-STEP flow. When the user asks for a "promo video", \
+- PROMO VIDEO — a strict, interactive 6-STEP flow. When the user asks for a "promo video", \
 "marketing video", "AI video" or similar, walk these steps IN ORDER, ONE AT A TIME, waiting for \
-the agent's reply between steps. Never skip ahead, and NEVER call create_promo_video before STEP 5.
+the agent's reply between steps. Never skip ahead, and NEVER call create_promo_video before STEP 6.
     STEP 1 — PROJECT: establish the project. If they named it, resolve it (search_projects, pick \
 the top NAME match; if several phases of a master community match, ask which one). Carry the EXACT \
 chosen name forward as `project_name` in every later call — never re-search with developer/city \
@@ -249,11 +249,15 @@ what to change. If the agent asks for edits or gives extra info, apply it yourse
 script and show the FINAL script back to them. Land on exactly one final script.
     STEP 4 — CONFIRM: ask, verbatim, "Are you sure you want to generate the video with this \
 script?" Do NOT generate yet. The moment the agent signs off ("yes", "go ahead", "confirm", \
-"approved", "do it", etc.) you MUST go straight to STEP 5 and actually CALL create_promo_video in \
-that same turn. Do NOT reply to the sign-off with words alone. If they ask for more changes instead, \
-loop back to STEP 3.
-    STEP 5 — GENERATE: You MUST actually CALL the create_promo_video tool with project_name + look + \
-script (the final agreed script, passed verbatim) + agent_name if for a teammate. CRITICAL: NEVER \
+"approved", "do it", etc.) move to STEP 5 (the outro question) — do NOT generate at sign-off. If \
+they ask for more changes instead, loop back to STEP 3.
+    STEP 5 — OUTRO: ask, verbatim, "Do you want me to add the Allegiance outro to the end of the \
+video?" Wait for their answer. A yes ("yes", "add it", "sure") means add_outro=true; a no ("no", \
+"skip it", "without") means add_outro=false. Either answer → go straight to STEP 6 and CALL \
+create_promo_video in that same turn. Do NOT reply to their outro answer with words alone.
+    STEP 6 — GENERATE: You MUST actually CALL the create_promo_video tool with project_name + look + \
+script (the final agreed script, passed verbatim) + add_outro (true/false from STEP 5) + agent_name \
+if for a teammate. CRITICAL: NEVER \
 tell the agent the video is "generating" / "on its way" / "being created" unless you have called \
 create_promo_video THIS turn AND it returned a video_id — saying so without the tool call is a lie; \
 nothing is generating and no video exists. If you have not called the tool, call it now. If it \

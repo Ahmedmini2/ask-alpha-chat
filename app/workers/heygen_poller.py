@@ -10,7 +10,7 @@ from app.brochures import storage
 from app.db.models import Project, Video
 from app.db.session import AsyncSessionLocal
 from app.integrations import fal, heygen
-from app.videos import align, broll, captions
+from app.videos import align, broll, captions, outro
 
 log = logging.getLogger("askalpha.heygen_poller")
 
@@ -127,51 +127,84 @@ async def _finalize(video_id: UUID, project_id: Optional[int], tg_chat_id: Optio
         )
 
 
+async def _maybe_outro(video_id: UUID, deliver_url: str, project_id: Optional[int]) -> Optional[str]:
+    """Best-effort final step: append the orientation-correct Allegiance outro (with a short
+    crossfade) to the video we're about to deliver. Returns the new hosted URL, or None to keep the
+    original on ANY failure — the outro is a nicety and must never fail the job."""
+    try:
+        src = await broll._fetch_bytes(deliver_url)
+        if not src:
+            log.warning("outro: could not fetch %s for %s", deliver_url, video_id)
+            return None
+        merged = await outro.append_outro(src)
+        async with AsyncSessionLocal() as db:
+            pname = await _project_name(db, project_id)
+        _key, url = await storage.upload_mp4(merged, f"{pname or 'promo'}-outro", storage.ASSETS_BUCKET)
+        log.info("video %s outro appended", video_id)
+        return url
+    except Exception as e:
+        log.warning("outro append failed for %s; delivering without outro: %s", video_id, e)
+        return None
+
+
 async def _broll_caption_and_finalize(
     video_id: UUID, raw_url: str, project_id: Optional[int], tg_chat_id: Optional[int],
-    script: Optional[str] = None,
+    script: Optional[str] = None, add_outro: bool = False,
 ) -> None:
-    """Post-process a finished HeyGen video: (1) cut in property b-roll (best-effort), then
-    (2) burn Hormozi captions — FAL whisper word timings + ffmpeg/libass. Both steps are
-    best-effort: any failure falls back to delivering the uncaptioned (b-roll or raw) video, so
-    the job never fails. Sends exactly ONE completion notification. Fire-and-forget."""
+    """Post-process a finished HeyGen video: (1) cut in property b-roll, (2) burn Hormozi captions
+    (FAL whisper timings + the ground-truth script for spelling), (3) append the Allegiance outro
+    when the agent opted in. Every stage is best-effort — any failure falls back to the best video
+    produced so far, so the job never fails. Sends exactly ONE completion notification."""
     try:
         # Phase 1 — b-roll. Its own concurrency guard, outside the caption semaphore.
         broll_url = await _maybe_broll(video_id, raw_url, project_id)
         source_url = broll_url or raw_url          # video we caption (composite if b-roll ran)
-        deliver_url = broll_url or raw_url          # delivered if captions are off / fail
-
-        if not _captions_on():
-            await _finalize(video_id, project_id, tg_chat_id,
-                            deliver_url=deliver_url, caption_status="skipped")
-            return
+        deliver_url = broll_url or raw_url          # best video so far (b-roll or raw)
+        caption_status = "skipped"
+        caption_error: Optional[str] = None
+        captioned_video_url: Optional[str] = None
 
         # Phase 2 — captions. Word timings come from the RAW audio (identical timeline to the
         # composite), then we burn them onto source_url.
-        async with _caption_sem:
-            try:
-                words = await fal.transcribe_words(raw_url)
-                # Caption TEXT comes from the ground-truth script (correct brand spellings like
-                # "Damac"); whisper supplies only the per-word TIMING. Falls back to whisper's own
-                # transcription if alignment can't confidently map the two.
-                if script:
-                    try:
-                        words = align.align_script_to_words(script, words) or words
-                    except Exception as ae:  # never let alignment fail the caption job
-                        log.warning("caption align failed for %s; using whisper text: %s", video_id, ae)
-                mp4 = await captions.burn_hormozi(source_url, words)
-                async with AsyncSessionLocal() as db:
-                    pname = await _project_name(db, project_id)
-                _key, captioned_url = await storage.upload_mp4(
-                    mp4, pname or "promo", storage.ASSETS_BUCKET)
-            except Exception as e:
-                log.warning("captions failed for %s; delivering uncaptioned: %s", video_id, e)
-                await _finalize(video_id, project_id, tg_chat_id, deliver_url=deliver_url,
-                                caption_status="failed", caption_error=str(e))
-                return
-            log.info("video %s captioned via fal+ffmpeg", video_id)
-            await _finalize(video_id, project_id, tg_chat_id, deliver_url=captioned_url,
-                            caption_status="done", captioned_video_url=captioned_url)
+        if _captions_on():
+            async with _caption_sem:
+                try:
+                    words = await fal.transcribe_words(raw_url)
+                    # Caption TEXT comes from the ground-truth script (correct brand spellings like
+                    # "Damac"); whisper supplies only the per-word TIMING. Falls back to whisper's
+                    # own transcription if alignment can't confidently map the two.
+                    if script:
+                        try:
+                            words = align.align_script_to_words(script, words) or words
+                        except Exception as ae:  # never let alignment fail the caption job
+                            log.warning("caption align failed for %s; using whisper text: %s", video_id, ae)
+                    mp4 = await captions.burn_hormozi(source_url, words)
+                    async with AsyncSessionLocal() as db:
+                        pname = await _project_name(db, project_id)
+                    _key, captioned_url = await storage.upload_mp4(
+                        mp4, pname or "promo", storage.ASSETS_BUCKET)
+                    deliver_url = captioned_url
+                    captioned_video_url = captioned_url
+                    caption_status = "done"
+                    log.info("video %s captioned via fal+ffmpeg", video_id)
+                except Exception as e:
+                    caption_status = "failed"
+                    caption_error = str(e)
+                    log.warning("captions failed for %s; delivering uncaptioned: %s", video_id, e)
+
+        # Phase 3 — Allegiance outro (opt-in, best-effort), applied to whatever we're delivering.
+        # Store the merged URL in captioned_video_url too: that's the column check_my_video_status
+        # returns first, so the WEB "is my video ready?" path serves the outro version, not the
+        # pre-outro one (Telegram already gets deliver_url in the completion message).
+        if add_outro:
+            outro_url = await _maybe_outro(video_id, deliver_url, project_id)
+            if outro_url:
+                deliver_url = outro_url
+                captioned_video_url = outro_url
+
+        await _finalize(video_id, project_id, tg_chat_id, deliver_url=deliver_url,
+                        caption_status=caption_status, caption_error=caption_error,
+                        captioned_video_url=captioned_video_url)
     except Exception as e:  # pragma: no cover — last-resort guard for the bg task
         log.exception("broll_caption_and_finalize crashed for %s: %s", video_id, e)
 
@@ -195,7 +228,7 @@ async def _poll_once() -> int:
 
         touched = 0
         notifications: list[tuple[int, str]] = []  # (chat_id, text)
-        to_caption: list[tuple] = []  # (video_id, raw_url, project_id, tg_chat_id, script)
+        to_caption: list[tuple] = []  # (video_id, raw_url, project_id, tg_chat_id, script, add_outro)
 
         for v in rows:
             if not v.heygen_video_id:
@@ -215,19 +248,22 @@ async def _poll_once() -> int:
                 if not video_url:
                     # Completed but the URL isn't populated yet — pick it up next cycle.
                     continue
-                if _postprocess_on():
-                    # Hand off to the post-edit stage (b-roll + Hormozi captions).
-                    # caption_status='processing' takes the row out of the poll set (no
-                    # double-spawn); status stays 'processing' (the only valid statuses are
-                    # pending/processing/completed/failed). We store the raw video as a fallback
-                    # and DON'T notify yet — _broll_caption_and_finalize sends the single message.
+                if _postprocess_on() or v.add_outro:
+                    # Hand off to the post-edit stage (b-roll + Hormozi captions + outro). The outro
+                    # alone is enough to need this stage, so route here when the agent opted in even
+                    # if b-roll and captions are off. caption_status='processing' takes the row out
+                    # of the poll set (no double-spawn); status stays 'processing' (the only valid
+                    # statuses are pending/processing/completed/failed). We store the raw video as a
+                    # fallback and DON'T notify yet — _broll_caption_and_finalize sends the message.
                     await db.execute(update(Video).where(Video.id == v.id).values(
                         status="processing", caption_status="processing",
                         video_url=video_url, thumbnail_url=thumb, updated_at=now,
                     ))
                     touched += 1
-                    to_caption.append((v.id, video_url, v.project_id, v.telegram_chat_id, v.script))
-                    log.info("video %s rendered, queuing post-edit (b-roll + captions)", v.id)
+                    to_caption.append((v.id, video_url, v.project_id, v.telegram_chat_id,
+                                       v.script, v.add_outro))
+                    log.info("video %s rendered, queuing post-edit (b-roll/captions/outro=%s)",
+                             v.id, v.add_outro)
                 else:
                     await db.execute(update(Video).where(Video.id == v.id).values(
                         status="completed", video_url=video_url, thumbnail_url=thumb,
@@ -271,9 +307,9 @@ async def _poll_once() -> int:
 
     # Spawn the b-roll + captioning finalizer AFTER the commit so the 'captioning' status is
     # durable first (keeps the row out of the next poll cycle — no double-spawn).
-    for video_id, raw_url, project_id, tg_chat_id, script in to_caption:
+    for video_id, raw_url, project_id, tg_chat_id, script, add_outro in to_caption:
         asyncio.create_task(
-            _broll_caption_and_finalize(video_id, raw_url, project_id, tg_chat_id, script))
+            _broll_caption_and_finalize(video_id, raw_url, project_id, tg_chat_id, script, add_outro))
 
     return touched
 

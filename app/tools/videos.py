@@ -540,6 +540,9 @@ async def create_promo_video_handler(db: AsyncSession, args: dict, ctx: dict) ->
     now = datetime.now(timezone.utc)
     stored_script = explicit_script
     tg_chat_id = ctx.get("telegram_chat_id")
+    # Allegiance outro opt-in (asked after the script is confirmed). The poller appends the
+    # orientation-correct outro with a short crossfade as the final post-edit step when true.
+    add_outro = bool(args.get("add_outro"))
     result = await db.execute(
         insert(Video).values(
             requested_by=user_id,
@@ -550,6 +553,7 @@ async def create_promo_video_handler(db: AsyncSession, args: dict, ctx: dict) ->
             created_at=now,
             updated_at=now,
             telegram_chat_id=tg_chat_id,
+            add_outro=add_outro,
         ).returning(Video.id)
     )
     # How the finished link reaches the agent depends on the channel: Telegram gets an
@@ -587,6 +591,7 @@ async def create_promo_video_handler(db: AsyncSession, args: dict, ctx: dict) ->
         "aspect_ratio": aspect_ratio,
         "format": ("1920x1080 landscape (16:9)" if aspect_ratio == "16:9"
                    else "1080x1920 portrait (9:16, Reels/TikTok)"),
+        "add_outro": add_outro,
         "delivery_channel": "telegram" if on_telegram else "web",
         "message": "Video generation started. Typical wait is 2–4 minutes. " + delivery,
     }
@@ -654,6 +659,15 @@ registry.register(Tool(
                     "9:16 image via Bedrock and uses it as the avatar's backdrop. If omitted, a generic "
                     "project-tailored scene is generated; if image generation fails, the avatar's "
                     "default scene is kept."
+                ),
+            },
+            "add_outro": {
+                "type": "boolean",
+                "description": (
+                    "Whether to append the Allegiance branded outro to the end of the video. Set "
+                    "from the agent's yes/no answer to the outro question asked AFTER the script is "
+                    "confirmed (STEP 5 of the promo-video flow). true = add it, false/omitted = don't. "
+                    "The server picks the portrait or landscape outro automatically to match the video."
                 ),
             },
         },

@@ -3,7 +3,7 @@ from typing import Optional, Any
 from uuid import UUID
 from sqlalchemy import (
     BigInteger, Integer, String, Text, Boolean, Numeric, Date, DateTime,
-    Float, ForeignKey, JSON, func
+    Float, ForeignKey, JSON, func, text
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -222,6 +222,9 @@ class Video(Base):
     broll_video_url: Mapped[Optional[str]] = mapped_column(Text)
     broll_status: Mapped[Optional[str]] = mapped_column(Text)
     broll_error: Mapped[Optional[str]] = mapped_column(Text)
+    # Allegiance outro opt-in (asked after the script is confirmed). When true the poller appends
+    # the orientation-correct outro with a short crossfade as the final post-edit step.
+    add_outro: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
 
 
 class DocumentChunk(Base):
