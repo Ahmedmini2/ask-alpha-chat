@@ -1,7 +1,7 @@
 from typing import Any
 from sqlalchemy import select, or_, func
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.db.models import Project, ProjectUnit
+from app.db.models import Project, ProjectAlphaVerdict, ProjectUnit
 from app.tools.projects import _serialize_project_summary
 from app.tools.registry import Tool, registry
 
@@ -128,7 +128,11 @@ async def search_units_handler(db: AsyncSession, args: dict, ctx: dict) -> dict:
     if price_filter_applied:
         stmt = stmt.where(agg.c.unit_min_price.is_not(None))
 
-    if sort == "price_desc":
+    if sort == "conviction":
+        # "best 1-bedroom in Dubai" — rank matching projects by Alpha Verdict conviction.
+        stmt = (stmt.outerjoin(ProjectAlphaVerdict, ProjectAlphaVerdict.project_id == Project.id)
+                    .order_by(ProjectAlphaVerdict.conviction.desc().nullslast(), Project.id))
+    elif sort == "price_desc":
         stmt = stmt.order_by(agg.c.unit_min_price.desc().nulls_last(), Project.id)
     elif sort == "price_asc" or price_filter_applied:
         stmt = stmt.order_by(agg.c.unit_min_price.asc().nulls_last(), Project.id)
@@ -141,10 +145,22 @@ async def search_units_handler(db: AsyncSession, args: dict, ctx: dict) -> dict:
     has_more = len(rows) > limit
     rows = rows[:limit]
 
+    vmap: dict[int, tuple] = {}
+    if rows:
+        vrows = (await db.execute(
+            select(ProjectAlphaVerdict.project_id, ProjectAlphaVerdict.verdict,
+                   ProjectAlphaVerdict.conviction)
+            .where(ProjectAlphaVerdict.project_id.in_([r[0].id for r in rows]))
+        )).all()
+        vmap = {pid: (verd, float(conv)) for pid, verd, conv in vrows}
+
     projects: list[dict] = []
     for row in rows:
         p = row[0]
         summary = _serialize_project_summary(p)
+        _vc = vmap.get(p.id)
+        summary["verdict"] = _vc[0] if _vc else None
+        summary["conviction"] = round(_vc[1]) if _vc else None
         summary["matched_units"] = {
             "count": int(row.matched_units) if row.matched_units is not None else 0,
             "min_price": float(row.unit_min_price) if row.unit_min_price is not None else None,
@@ -235,10 +251,11 @@ registry.register(Tool(
             },
             "sort": {
                 "type": "string",
-                "enum": ["price_asc", "price_desc"],
+                "enum": ["price_asc", "price_desc", "conviction"],
                 "description": (
-                    "Sort by the cheapest matching unit price. 'price_asc' = lowest first, "
-                    "'price_desc' = highest first. Defaults to lowest-first when a price bound is set."
+                    "Sort order. 'conviction' ranks by Alpha Verdict conviction — use for 'best "
+                    "1-bedroom in Dubai', 'top studios', 'best-value 2-beds'. 'price_asc' = lowest "
+                    "first, 'price_desc' = highest first. Defaults to lowest-first when a price bound is set."
                 ),
             },
             "limit": {

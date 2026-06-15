@@ -1,7 +1,7 @@
 from typing import Any
 from sqlalchemy import select, or_, func, case
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.db.models import Project, ProjectUnit
+from app.db.models import Project, ProjectAlphaVerdict, ProjectUnit
 from app.tools.registry import Tool, registry
 
 
@@ -101,7 +101,12 @@ async def search_projects_handler(db: AsyncSession, args: dict, ctx: dict) -> di
     if max_price is not None:
         stmt = stmt.where(Project.min_price <= float(max_price))
 
-    if sort == "price_desc" or (price_filter_applied and sort is None):
+    if sort == "conviction":
+        # "best / top / strongest" — rank by the stored Alpha Verdict conviction (LEFT JOIN so
+        # unscored projects still appear, last). NULLS LAST keeps them out of the top.
+        stmt = (stmt.outerjoin(ProjectAlphaVerdict, ProjectAlphaVerdict.project_id == Project.id)
+                    .order_by(ProjectAlphaVerdict.conviction.desc().nullslast(), Project.id))
+    elif sort == "price_desc" or (price_filter_applied and sort is None):
         stmt = stmt.order_by(Project.min_price.desc(), Project.id)
     elif sort == "price_asc":
         stmt = stmt.order_by(Project.min_price.asc(), Project.id)
@@ -143,11 +148,29 @@ async def search_projects_handler(db: AsyncSession, args: dict, ctx: dict) -> di
         sug_rows = (await db.execute(sug_stmt)).scalars().all()
         suggestions = [_serialize_project_summary(p) for p in sug_rows]
 
+    # Attach the Alpha Verdict (verdict + conviction) to each card so the UI/agent can show the
+    # badge and so superlative results are self-explaining.
+    vmap: dict[int, tuple] = {}
+    if projects:
+        vrows = (await db.execute(
+            select(ProjectAlphaVerdict.project_id, ProjectAlphaVerdict.verdict,
+                   ProjectAlphaVerdict.conviction)
+            .where(ProjectAlphaVerdict.project_id.in_([p.id for p in projects]))
+        )).all()
+        vmap = {pid: (verd, float(conv)) for pid, verd, conv in vrows}
+
+    def _with_verdict(p: Project) -> dict:
+        d = _serialize_project_summary(p)
+        vc = vmap.get(p.id)
+        d["verdict"] = vc[0] if vc else None
+        d["conviction"] = round(vc[1]) if vc else None
+        return d
+
     return {
         "count": len(projects),
         "has_more": has_more,
         "next_offset": (offset + limit) if has_more else None,
-        "projects": [_serialize_project_summary(p) for p in projects],
+        "projects": [_with_verdict(p) for p in projects],
         "suggestions": suggestions,
         "query": query,
     }
@@ -213,11 +236,12 @@ registry.register(Tool(
             },
             "sort": {
                 "type": "string",
-                "enum": ["price_desc", "price_asc"],
+                "enum": ["price_desc", "price_asc", "conviction"],
                 "description": (
-                    "Optional sort order on starting price. 'price_desc' = highest to lowest, "
-                    "'price_asc' = lowest to highest. When a price filter is set and sort is "
-                    "omitted, results default to highest-to-lowest."
+                    "Optional sort. 'conviction' ranks by Alpha Verdict conviction (use for "
+                    "'best / top / strongest / best-value' requests). 'price_desc' = highest to "
+                    "lowest, 'price_asc' = lowest to highest. When a price filter is set and sort "
+                    "is omitted, results default to highest-to-lowest."
                 ),
             },
             "limit": {

@@ -30,6 +30,17 @@ class Settings(BaseSettings):
     pm_api_key: str = ""
     pm_company_key: str = ""
     pm_base_url: str = "https://api.propertymonitor.com"
+    pm_emirate_id: str = "4"            # Dubai
+    # Representative unit used for a community's pre-flight AVM when ingesting.
+    pm_default_property_type_id: int = 1   # 1 = Apartment
+    pm_default_bedrooms: str = "2"
+    pm_default_size_sqft: float = 1100.0
+    pm_ingest_concurrency: int = 3      # PM is rate-limited; keep low
+
+    # Alpha Verdict (ported from the website; numbers come from PM community stats, static fallback).
+    alpha_verdict_formula_version: str = "v1"
+    alpha_verdict_max_age_days: int = 7
+    alpha_verdict_intent: str = "yield"   # the website's quickVerdict intent
 
     # HeyGen (AI avatar video generation)
     heygen_api_key: str = ""

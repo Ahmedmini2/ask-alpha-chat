@@ -235,3 +235,47 @@ class DocumentChunk(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     metadata_: Mapped[dict] = mapped_column("metadata", JSONB, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ProjectAlphaVerdict(Base):
+    __tablename__ = "project_alpha_verdict"
+
+    project_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("projects.id"), primary_key=True)
+    conviction: Mapped[float] = mapped_column(Numeric, nullable=False)
+    verdict: Mapped[str] = mapped_column(Text, nullable=False)
+    intent: Mapped[str] = mapped_column(Text, nullable=False)
+    yield_score: Mapped[Optional[float]] = mapped_column(Numeric)
+    comp_score: Mapped[Optional[float]] = mapped_column(Numeric)
+    thesis_score: Mapped[Optional[float]] = mapped_column(Numeric)
+    risk_score: Mapped[Optional[float]] = mapped_column(Numeric)
+    net_yield_pct: Mapped[Optional[float]] = mapped_column(Numeric)
+    area_rent_return_pct: Mapped[Optional[float]] = mapped_column(Numeric)
+    annual_appreciation_pct: Mapped[Optional[float]] = mapped_column(Numeric)
+    y5_value_aed: Mapped[Optional[float]] = mapped_column(Numeric)
+    ppsf_aed: Mapped[Optional[float]] = mapped_column(Numeric)
+    vs_area_price_pct: Mapped[Optional[float]] = mapped_column(Numeric)
+    community_slug: Mapped[Optional[str]] = mapped_column(Text)
+    community_label: Mapped[Optional[str]] = mapped_column(Text)
+    used_fallback: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    stats_source: Mapped[Optional[str]] = mapped_column(Text)
+    price_aed: Mapped[Optional[float]] = mapped_column(Numeric)
+    beds: Mapped[Optional[float]] = mapped_column(Numeric)
+    size_sqft: Mapped[Optional[float]] = mapped_column(Numeric)
+    inputs: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    basis: Mapped[Optional[str]] = mapped_column(Text)
+    formula_version: Mapped[str] = mapped_column(Text, nullable=False)
+    stats_as_of: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class PmCommunityStats(Base):
+    __tablename__ = "pm_community_stats"
+
+    community_slug: Mapped[str] = mapped_column(Text, primary_key=True)
+    community_label: Mapped[Optional[str]] = mapped_column(Text)
+    gross_yield: Mapped[Optional[float]] = mapped_column(Numeric)        # decimal
+    appreciation: Mapped[Optional[float]] = mapped_column(Numeric)       # decimal YoY
+    ppsf_aed: Mapped[Optional[float]] = mapped_column(Numeric)
+    service_charge_aed_sqft: Mapped[Optional[float]] = mapped_column(Numeric)
+    sample_n: Mapped[Optional[int]] = mapped_column(BigInteger)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

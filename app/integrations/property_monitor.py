@@ -61,9 +61,14 @@ async def _post(path: str, body: dict) -> Any:
 
 
 # ---- Lookups (no report/OTP needed) ----
-async def search_locations(q: str, emirate_id: str = "4") -> Any:
-    """Resolve an area name to a Property Monitor locationId (Dubai=4)."""
-    return await _get("/pm/v1/avm/locations", {"q": q, "emirateId": emirate_id})
+async def search_locations(q: str, emirate_id: str = "4", area_name: str | None = None,
+                           master_development: str | None = None, sub_loc1: str | None = None) -> Any:
+    """Resolve an area name to Property Monitor location(s). Optional area_name/masterDevelopment/
+    subLoc1 narrow the match (Dubai emirateId=4)."""
+    return await _get("/pm/v1/avm/locations", {
+        "q": q, "emirateId": emirate_id, "areaName": area_name,
+        "masterDevelopment": master_development, "subLoc1": sub_loc1,
+    })
 
 
 async def property_search(location_id: str | None = None, q: str | None = None, emirate_id: str = "4") -> Any:
@@ -86,20 +91,34 @@ async def generate_otp(report_hash: str, email: str = "", phone: str = "") -> An
     return await _post("/pm/v1/avm/generate", {"reportHash": report_hash, "email": email, "phone": phone})
 
 
-async def get_avm_result(report_hash: str, otp_code: str | None = None) -> Any:
-    return await _get("/pm/v1/avm/consumer-avm", {"reportHash": report_hash, "otpCode": otp_code})
+async def get_avm_result(report_hash: str) -> Any:
+    """The Preview/Consumer AVM report by hash — full data (valuation, ppsf, comps, service
+    charges). With our COMPANY-KEY this returns without an OTP."""
+    return await _get("/pm/v1/avm/consumer-avm", {"reportHash": report_hash})
 
 
-async def get_market_trends(report_hash: str, data_type: str = "yields",
-                            otp_code: str | None = None, emirate_id: str | None = None) -> Any:
-    """PMDPI market trends. data_type one of: sales | rentals | yields."""
-    return await _get("/pm/v1/avm/market-trends", {
-        "reportHash": report_hash, "dataType": data_type, "otpCode": otp_code, "emirateId": emirate_id,
-    })
+async def get_market_trends(report_hash: str, data_type: str | None = None) -> Any:
+    """PMDPI market trends (sales/rentals/yields). Omitting data_type returns the full set."""
+    return await _get("/pm/v1/avm/market-trends", {"reportHash": report_hash, "dataType": data_type})
 
 
-async def get_comparables(report_hash: str, evidence_type: str = "TRA", otp_code: str | None = None) -> Any:
+async def get_comparables(report_hash: str, evidence_type: str = "TRA") -> Any:
     """Local market activity. evidence_type: ACT (active listings) | TRA (transferred sales)."""
     return await _get("/pm/v1/avm/local-market-activity", {
-        "reportHash": report_hash, "evidenceType": evidence_type, "otpCode": otp_code,
+        "reportHash": report_hash, "evidenceType": evidence_type,
     })
+
+
+async def get_lowest_highest(report_hash: str) -> Any:
+    """Lowest & highest comparable transactions for the report's location."""
+    return await _get("/pm/v1/avm/lowest-highest-price-transaction", {"reportHash": report_hash})
+
+
+async def get_sold_properties(report_hash: str) -> Any:
+    """Recently sold/transferred properties for the report's location."""
+    return await _get("/pm/v1/avm/sold-properties", {"reportHash": report_hash})
+
+
+async def get_about_location(report_hash: str) -> Any:
+    """About-the-location narrative / descriptive payload."""
+    return await _get("/pm/v1/avm/about-the-location", {"reportHash": report_hash})

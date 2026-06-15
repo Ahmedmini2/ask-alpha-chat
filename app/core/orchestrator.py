@@ -20,6 +20,7 @@ import app.tools.pois        # noqa: F401
 import app.tools.property_monitor_tools  # noqa: F401
 import app.tools.analysis    # noqa: F401
 import app.tools.investment_metrics  # noqa: F401
+import app.tools.alpha_verdict_tool  # noqa: F401
 import app.tools.inventory_export   # noqa: F401
 import app.tools.documents   # noqa: F401
 import app.tools.videos      # noqa: F401
@@ -114,6 +115,11 @@ NOT search_projects. search_projects cannot filter by bedrooms or unit type and 
 return "we don't have this". Example: "4BR villa or townhouse under 10M" → search_units with \
 unit_type=["villa","townhouse"], bedrooms_min=4, bedrooms_max=4, max_unit_price=10000000. \
 Use search_projects only for project-level queries (by name, location, sale status, or overall budget).
+- BEST / TOP / STRONGEST / BEST-VALUE: when the user asks for the "best", "top", "strongest", or \
+"best value" projects or units ("best 1-bedroom in Dubai", "top investments in JVC", "best value \
+2-beds"), pass sort='conviction' to search_units (if a bedroom/unit attribute is mentioned) or \
+search_projects — results then rank by the Alpha Verdict conviction, and each card carries its \
+verdict + conviction so you can speak to why the top ones lead.
 - When the user asks for properties within a budget ("under 1M dirhams", "below 2M AED", \
 "between 500K and 1M"), pass the explicit `min_price` and/or `max_price` arguments to \
 search_projects. Convert shorthand to absolute numbers ("1M" → 1000000, "500K" → 500000). \
@@ -124,6 +130,20 @@ search_nearby_projects with the area name (or lat/lng); it returns projects sort
 - When the user asks what AMENITIES are near a specific project — schools, hospitals, clinics, \
 malls, supermarkets, metro, parks, beaches — use get_nearby_amenities with the project_id (search \
 first if you only have a name). It returns amenities grouped by category with distances.
+- ALPHA VERDICT (the website-parity headline): when the user asks whether a project is a GOOD BUY, \
+worth it, a good investment, "should I buy", or asks for "the verdict / conviction / score / the \
+numbers" on a SPECIFIC project, call get_alpha_verdict (by project_id or project_name). It returns \
+the SAME thing the website shows — BUY/WATCH/SKIP, the conviction (0-100), the 4 pillars (Yield vs \
+Community, Price/sqft vs Community, Yield vs Dubai, Risk & Safety) and the Numbers at a Glance (net \
+yield, area rent return, annual appreciation, 5-year value, price/sqft, premium-vs-area). Lead with \
+the verdict + conviction, then the standout number. Surface the `basis`; if used_fallback is true, \
+say the community isn't in our market model yet so it's an area estimate. Prefer this for any \
+"is it good / what's the verdict" question. (Use get_investment_metrics only when they want the raw \
+metric breakdown, and analyze_investment for the deeper asking-vs-market transaction read.)
+- For LIVE third-party market data (Property Monitor) — an actual AVM valuation, observed/real yield, \
+recent SOLD comps, lowest/highest prices, or local activity for a project or area — use \
+get_live_market. Label it clearly as Property Monitor live data (distinct from the Alpha Verdict's \
+area model). If it reports not-available, say PM data isn't loaded for that area yet.
 - When the user asks whether a project is a GOOD INVESTMENT, good value, worth buying, or good ROI, \
 use analyze_investment (by project_id, or project_name). It returns the asking rate vs the area's \
 market median, the premium/discount, momentum, supply, payment-plan signal, and a labeled yield \
@@ -392,6 +412,14 @@ def _summarize_tool_result(name: str, result: dict) -> str:
         return (f"metrics {result.get('project_name') or result.get('community')!r} "
                 f"yield={mt.get('net_yield_pct')}% appr={mt.get('annual_appreciation_pct')}% "
                 f"tts={mt.get('time_to_sell_days')}d fallback={result.get('used_area_fallback')}")
+    if name == "get_alpha_verdict":
+        if not result.get("found"):
+            return "no verdict"
+        return (f"verdict {result.get('project_name') or 'hypothetical'!r} "
+                f"{result.get('verdict')} conv={result.get('conviction')} fb={result.get('used_fallback')}")
+    if name == "get_live_market":
+        return (f"live_market {result.get('community') or result.get('project_name')!r} "
+                f"available={result.get('available')}")
     if name == "get_developer_profile":
         if not result.get("found"):
             return "developer not found"
@@ -496,6 +524,33 @@ def _build_cards(tool_calls: list[dict]) -> list[dict]:
                     "metrics": result.get("metrics"),
                     "used_area_fallback": result.get("used_area_fallback"),
                     "basis": result.get("basis"),
+                })
+        elif name == "get_alpha_verdict":
+            if result.get("found"):
+                cards.append({
+                    "type": "alpha_verdict",
+                    "project_id": result.get("project_id"),
+                    "project_name": result.get("project_name"),
+                    "verdict": result.get("verdict"),
+                    "conviction": result.get("conviction"),
+                    "pillars": result.get("pillars"),
+                    "numbers": result.get("numbers"),
+                    "community": result.get("community"),
+                    "used_fallback": result.get("used_fallback"),
+                    "basis": result.get("basis"),
+                })
+        elif name == "get_live_market":
+            if result.get("available"):
+                cards.append({
+                    "type": "live_market",
+                    "project_id": result.get("project_id"),
+                    "project_name": result.get("project_name"),
+                    "community": result.get("community"),
+                    "valuation": result.get("valuation"),
+                    "ppsf_aed": result.get("ppsf_aed"),
+                    "observed_yield_pct": result.get("observed_yield_pct"),
+                    "sold": result.get("sold"),
+                    "fetched_at": result.get("fetched_at"),
                 })
         elif name == "get_developer_profile":
             if result.get("found"):
