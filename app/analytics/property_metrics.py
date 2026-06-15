@@ -285,6 +285,25 @@ async def _apply_sentiment(db: AsyncSession, area: str, out: dict) -> None:
         out["momentum_pct"] = s.get("rate_momentum_pct")
 
 
+async def _apply_pm_stats(db: AsyncSession, area: str, out: dict) -> None:
+    """Override area ppsf + appreciation with REAL Property Monitor community stats when we have
+    them, so every metric path (get_investment_metrics, brochure/flyer) matches the Alpha Verdict.
+    PM has no rental yield via its endpoints, so area_yield stays from our band. Best-effort."""
+    from app.analytics.alpha_verdict import canonical_community_slug
+    slug = canonical_community_slug(area)
+    row = (await db.execute(
+        text("SELECT ppsf_aed, appreciation FROM pm_community_stats WHERE community_slug = :s"),
+        {"s": slug},
+    )).mappings().first()
+    if not row:
+        return
+    if row["ppsf_aed"] is not None:
+        out["area_ppsf"] = float(row["ppsf_aed"])
+    if row["appreciation"] is not None:
+        out["area_appreciation"] = float(row["appreciation"])
+    out["pm_backed"] = True
+
+
 async def gather_area_inputs(project) -> dict:
     """Pull the real-data overrides for a project. Always returns a dict with the
     same keys (values None when unavailable) so it can be splatted straight into
@@ -297,8 +316,10 @@ async def gather_area_inputs(project) -> dict:
            "activity_label": None, "momentum_pct": None}
     try:
         async with AsyncSessionLocal() as s:
+            area = project.district or project.city or ""
             out["area_yield"] = await _area_yield_band(s, project.id)
-            await _apply_sentiment(s, project.district or project.city or "", out)
+            await _apply_sentiment(s, area, out)
+            await _apply_pm_stats(s, area, out)   # real PM ppsf + appreciation win
     except Exception as e:
         log.warning("gather_area_inputs failed for project %s: %s", getattr(project, "id", "?"), e)
     return out
@@ -321,6 +342,7 @@ async def gather_area_inputs_by_area(area: str) -> dict:
                 if lo is not None and hi is not None:
                     out["area_yield"] = (lo + hi) / 2.0 / 100.0
             await _apply_sentiment(s, area or "", out)
+            await _apply_pm_stats(s, area or "", out)   # real PM ppsf + appreciation win
     except Exception as e:
         log.warning("gather_area_inputs_by_area failed for %r: %s", area, e)
     return out
