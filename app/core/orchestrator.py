@@ -377,15 +377,25 @@ async def _load_history(db: AsyncSession, conversation_id: uuid.UUID) -> list[di
         .order_by(AskAlphaMessage.id.desc())
         .limit(settings.chat_history_max_messages)
     )).scalars().all()  # newest-first
-    return _trim_history(rows, settings.chat_history_char_budget)
+    trimmed = _trim_history(rows, settings.chat_history_char_budget)
+    # chat_turn appends the CURRENT user turn right after this history, so the slice must NOT
+    # end with a 'user' message or the two collide into consecutive 'user' roles (Bedrock then
+    # rejects the whole turn). A trailing 'user' here means the prior turn's assistant reply was
+    # never persisted (orphan) — drop it so already-poisoned conversations self-heal.
+    while trimmed and trimmed[-1]["role"] != "assistant":
+        trimmed.pop()
+    return trimmed
 
 
 def _trim_history(rows_newest_first, char_budget: int) -> list[dict]:
     """Pure history-budgeting (unit-tested). Takes message rows NEWEST-first (each with .role/.content),
     keeps the newest ones whose combined content fits `char_budget` (always at least the latest),
-    and returns Bedrock-shaped dicts OLDEST-first that start with a 'user' message (Bedrock requires
-    the first message to be the user and roles to alternate; the stored history already alternates,
-    so we only drop a leading assistant left by the trim)."""
+    and returns Bedrock-shaped dicts OLDEST-first that start with a 'user' message and strictly
+    alternate roles (Bedrock REQUIRES both). We do NOT trust the stored history to already alternate:
+    a turn whose assistant reply was never persisted (e.g. a transient Bedrock failure between the
+    user-insert and the assistant-insert in chat_turn) leaves consecutive same-role rows that would
+    otherwise be forwarded verbatim and get every later turn rejected with 'roles must alternate'.
+    So we collapse any consecutive same-role run to its NEWEST message, then drop a leading non-user."""
     kept = []
     used = 0
     for r in rows_newest_first:  # walk newest -> oldest, stop once the budget is spent
@@ -394,9 +404,17 @@ def _trim_history(rows_newest_first, char_budget: int) -> list[dict]:
             break
         kept.append(r)
     kept.reverse()  # oldest-first for the model
-    while kept and kept[0].role != "user":
-        kept.pop(0)
-    return [{"role": r.role, "content": [{"text": r.content}]} for r in kept]
+    # Collapse consecutive same-role rows (defensive: stored history is NOT guaranteed to
+    # alternate). Keep the NEWEST message of each run — it carries the most recent content.
+    collapsed = []
+    for r in kept:
+        if collapsed and collapsed[-1].role == r.role:
+            collapsed[-1] = r
+        else:
+            collapsed.append(r)
+    while collapsed and collapsed[0].role != "user":
+        collapsed.pop(0)
+    return [{"role": r.role, "content": [{"text": r.content}]} for r in collapsed]
 
 
 async def _insert_message(
@@ -858,7 +876,7 @@ async def chat_turn(
     # Carrying a plain UUID past the tool loop avoids that entirely.
     conv_id = conv.id
     history = await _load_history(db, conv_id)
-    await _insert_message(db, conv_id, "user", user_message, cards=None)
+    user_msg = await _insert_message(db, conv_id, "user", user_message, cards=None)
 
     messages = history + [{"role": "user", "content": [{"text": user_message}]}]
     ctx = {
@@ -867,7 +885,26 @@ async def chat_turn(
         "conversation_id": conv_id,
         "telegram_chat_id": telegram_chat_id,
     }
-    reply_text, tool_calls = await _run_tool_loop(db, messages, ctx)
+    try:
+        reply_text, tool_calls = await _run_tool_loop(db, messages, ctx)
+    except Exception:
+        # The user message was committed BEFORE the model call (above). If the model turn
+        # blows up (transient Bedrock ThrottlingException/ModelTimeout, network error, etc.)
+        # the assistant reply below never runs, leaving an ORPHAN user row with no following
+        # assistant. The conversation_id is reused next turn, so that orphan would load as
+        # history and the appended new user message makes consecutive 'user' roles — Bedrock
+        # then rejects every later turn ('roles must alternate'), permanently bricking the
+        # chat. Delete the orphan so the turn fails cleanly (caller surfaces a 500) without
+        # poisoning future turns, then re-raise.
+        try:
+            await db.rollback()  # recover the session if a tool aborted the transaction
+            await db.execute(
+                AskAlphaMessage.__table__.delete().where(AskAlphaMessage.id == user_msg.id)
+            )
+            await db.commit()
+        except Exception:
+            log.exception("failed to clean up orphan user message %s", user_msg.id)
+        raise
     cards = _build_cards(tool_calls)
 
     # The model corrupts long signed download URLs when it retypes them, so never let one

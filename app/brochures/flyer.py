@@ -113,7 +113,9 @@ def _handover_facts(project: Project) -> tuple[str, str]:
         if rp is not None and rp >= 100:
             return "Ready", "Completed"
         if rp is not None and rp > 0:
-            return f"{rp:.0f}% built", "Under construction"
+            # Cap at 99 so an under-construction project never rounds up to a
+            # contradictory '100% built' under the 'Under construction' sub-label.
+            return f"{min(99, round(rp))}% built", "Under construction"
     return "TBA", "To be announced"
 
 

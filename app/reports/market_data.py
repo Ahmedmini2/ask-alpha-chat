@@ -81,9 +81,29 @@ def _slug_label(label: str, slug: str) -> str:
 
 # --------------------------------------------------------------------------- DB gather
 
+async def _dubai_ppsf(db: AsyncSession) -> float | None:
+    """Real Dubai-wide avg price/sqft = average of every community's indexed ppsf_aed.
+
+    pm_community_stats holds one ppsf_aed per community, so this is an honest Dubai-residential
+    aggregate rather than an arbitrary single community's price_sqft."""
+    return _f((await db.execute(text(
+        "SELECT avg(ppsf_aed) FROM pm_community_stats WHERE ppsf_aed IS NOT NULL"
+    ))).scalar())
+
+
 async def _market_index(db: AsyncSession) -> dict:
-    """Dubai price-index headline + sparkline from pm_market_trends (one Dubai-wide series)."""
-    raw = (await db.execute(text("SELECT raw FROM pm_market_trends LIMIT 1"))).scalar_one_or_none()
+    """Dubai price-index headline + sparkline from pm_market_trends.
+
+    pm_market_trends is keyed PER community (one row per community_slug — UNIQUE index), so there
+    is no single "Dubai-wide" row. Pick a stable, representative series deterministically (prefer
+    Dubai Marina, then the most recently fetched community, then slug) so the index / momentum /
+    sparkline don't flip between arbitrary communities across runs or after a VACUUM. The headline
+    price/sqft KPI is NOT taken from this single community's price_sqft — it is a real Dubai-wide
+    aggregate computed by _dubai_ppsf()."""
+    raw = (await db.execute(text(
+        "SELECT raw FROM pm_market_trends "
+        "ORDER BY (community_slug = 'dubai-marina') DESC, fetched_at DESC, community_slug LIMIT 1"
+    ))).scalar_one_or_none()
     if not raw:
         return {}
     series = raw if isinstance(raw, list) else (raw.get("data") if isinstance(raw, dict) else None)
@@ -95,14 +115,27 @@ async def _market_index(db: AsyncSession) -> dict:
     last = pts[-1]
     first = pts[0]
     index_vals = [p.get("index_value") for p in pts]
+
+    # PM's monthly series carries only index_value/price_sqft/yoy_change — there are no
+    # mom_change/qoq_change keys — so derive momentum from the index_value series itself
+    # (oldest→newest): MoM = last vs the previous month, QoQ = last vs three months back.
+    def _pct_change(offset: int):
+        if len(pts) <= offset:
+            return None
+        cur = _f(pts[-1].get("index_value"))
+        prev = _f(pts[-1 - offset].get("index_value"))
+        if cur is None or not prev:
+            return None
+        return (cur / prev - 1.0) * 100.0
+
     out = {
         "ppsf": _f(last.get("price_sqft")),
         "yoy": _f(last.get("yoy_change")),
-        "mom": _f(last.get("mom_change")),
-        "qoq": _f(last.get("qoq_change")),
+        "mom": _pct_change(1),
+        "qoq": _pct_change(3),
         "index_value": _f(last.get("index_value")),
         "index_base": _f(first.get("index_value")) or 100.0,
-        "as_of": f"{last.get('mn_name', '')} {last.get('yr', '')}".strip(),
+        "as_of": f"{last.get('mn', '')} {last.get('yr', '')}".strip(),
         "start_label": f"{first.get('yr', '')}",
         "end_label": f"{last.get('yr', '')}",
         "series": index_vals,
@@ -195,6 +228,7 @@ async def build_market_context(db: AsyncSession) -> tuple[dict, dict]:
     """Assemble the Jinja context for the Dubai Market Report. Returns (context, image_files);
     image_files is empty (the chart is inline SVG, logo/fonts come from static_dir)."""
     idx = await _market_index(db)
+    dubai_ppsf = await _dubai_ppsf(db)
     communities = await _top_communities(db)
     picks = await _top_picks(db)
     premium = await _premium_communities(db)
@@ -212,7 +246,9 @@ async def build_market_context(db: AsyncSession) -> tuple[dict, dict]:
         area = f"{first_x},{chart_h:.1f} {points} {last_x},{chart_h:.1f}"
 
     kpis = [
-        {"label": "Avg Price / sqft", "value": fmt_money(idx.get("ppsf")), "sub": "Dubai residential"},
+        {"label": "Avg Price / sqft",
+         "value": fmt_money(dubai_ppsf if dubai_ppsf is not None else idx.get("ppsf")),
+         "sub": "Dubai residential"},
         {"label": "YoY Appreciation", "value": fmt_pct(idx.get("yoy"), signed=True, decimals=2),
          "sub": "trailing 12 months"},
         {"label": "Projects Scored", "value": f"{dist['total']:,}", "sub": "by Alpha Verdict"},

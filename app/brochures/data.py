@@ -145,8 +145,22 @@ def handover_label(project) -> Optional[str]:
             if rp >= 100:
                 return "Ready"
             if rp > 0:
-                return f"{rp:.0f}% built"
+                # Cap the displayed % at 99 so a project that hasn't reached the
+                # 'Ready' threshold never rounds up to a contradictory '100% built'.
+                return f"{min(99, round(rp))}% built"
     return None
+
+
+def _is_real_handover_date(handover: Optional[str]) -> bool:
+    """True only when `handover` is an actual date/quarter (e.g. "Q3 '27"), not a
+    construction-progress fallback ("62% built") or "Ready". The "anticipated
+    handover {…}" phrasing only makes sense for a future-dated handover, so callers
+    use this to suppress that clause for the progress/Ready fallbacks (the flyer
+    handles those with proper sub-labels via _handover_facts)."""
+    if not handover:
+        return False
+    h = handover.strip()
+    return not (h == "Ready" or h.endswith("% built"))
 
 
 def clean_text(s: Optional[str]) -> str:
@@ -378,7 +392,10 @@ def _payment_plan(project: Project, handover: Optional[str]) -> Optional[dict]:
         is_final = i == len(steps) - 1
         pct_s = f"{s['pct']:g}%"
         if is_final and s["stage"] in ("on_handover", "post_handover", ""):
-            label, when = "On Completion", (handover or s["name"] or None)
+            # Only print a real date/quarter under "On Completion"; a progress/Ready
+            # fallback isn't a date, so fall through to the step's own name.
+            hand_when = handover if _is_real_handover_date(handover) else None
+            label, when = "On Completion", (hand_when or s["name"] or None)
         else:
             label = f"{ordinals[min(i, 6)]} Installment"
             when = s["name"] or None
@@ -387,7 +404,7 @@ def _payment_plan(project: Project, handover: Optional[str]) -> Optional[dict]:
     pre = sum(s["pct"] for s in steps[:-1])
     final = steps[-1]["pct"]
     summary_bits = [f"{pre:g} / {final:g} · spread across construction, balance on completion"]
-    if handover:
+    if _is_real_handover_date(handover):
         summary_bits.append(f"anticipated handover {handover}")
     return {"steps": cells, "summary": " · ".join(summary_bits)}
 
@@ -581,6 +598,12 @@ async def compute_financials(
         cheaper_label, cheaper_val = "Premium to Area Average", fmt_pct(cheaper_pct, signed=True)
 
     entry_compact = fmt_aed_compact(entry_price)
+    # "Anticipated Handover" only fits a real date/quarter (or the empty "—" placeholder).
+    # When handover_label fell back to a construction-progress value ("62% built"/"Ready"),
+    # relabel the row so the label matches the value's meaning (mirrors the flyer's
+    # _handover_facts sub-labels).
+    handover_k = "Construction Progress" if (handover and not _is_real_handover_date(handover)) \
+        else "Anticipated Handover"
     numbers = [
         row("Entry Price", entry_compact.replace("AED ", "") if entry_compact else None, "AED"),
         row("Price / sqft", fmt_int(price_sqft), "AED"),
@@ -593,7 +616,7 @@ async def compute_financials(
         row("Golden Visa Eligible", golden),
         row("Days on Market", fmt_int(dom)),
         row("Time to Sell in Area", f"{fmt_int(tts)} days" if tts else None),
-        row("Anticipated Handover", handover),
+        row(handover_k, handover),
     ]
 
     return {
@@ -827,7 +850,7 @@ async def build_context(
         pricing_intro_bits.append(f"Starting prices from {entry_compact}")
     if pp:
         pricing_intro_bits.append(f"on a {pp['summary'].split(' · ')[0].replace(' / ', '/')} payment plan")
-    if handover:
+    if _is_real_handover_date(handover):
         pricing_intro_bits.append(f"anticipated handover {handover}")
     pricing_intro = (" · ".join(pricing_intro_bits) + ".") if pricing_intro_bits else None
 
