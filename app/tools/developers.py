@@ -48,12 +48,18 @@ async def get_developer_profile_handler(db: AsyncSession, args: dict, ctx: dict)
         {"id": d.id},
     )).mappings().first()
 
+    # Notable projects = this developer's strongest projects by Alpha Verdict conviction (the
+    # standing conviction-first rule: highest conviction first, price ascending breaks ties), with
+    # the score carried on each entry so it's visible on every card. LEFT JOIN keeps unscored
+    # projects (NULLS LAST); p.id is the final unique tiebreaker for stable ordering.
     notable = (await db.execute(
         text("""
-            SELECT id, name, district, sale_status, completion_quarter, min_price
-            FROM projects
-            WHERE developer_id = :id AND is_published = true
-            ORDER BY max_price DESC NULLS LAST
+            SELECT p.id, p.name, p.district, p.sale_status, p.completion_quarter, p.min_price,
+                   pav.verdict, pav.conviction
+            FROM projects p
+            LEFT JOIN project_alpha_verdict pav ON pav.project_id = p.id
+            WHERE p.developer_id = :id AND p.is_published = true
+            ORDER BY pav.conviction DESC NULLS LAST, p.min_price ASC NULLS LAST, p.id ASC
             LIMIT 5
         """),
         {"id": d.id},
@@ -87,6 +93,8 @@ async def get_developer_profile_handler(db: AsyncSession, args: dict, ctx: dict)
                 "id": n["id"], "name": n["name"], "district": n["district"],
                 "sale_status": n["sale_status"], "completion_quarter": n["completion_quarter"],
                 "min_price": float(n["min_price"]) if n["min_price"] else None,
+                "verdict": n["verdict"],
+                "conviction": round(float(n["conviction"])) if n["conviction"] is not None else None,
             } for n in notable
         ],
     }

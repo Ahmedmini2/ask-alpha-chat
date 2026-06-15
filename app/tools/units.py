@@ -56,7 +56,6 @@ async def search_units_handler(db: AsyncSession, args: dict, ctx: dict) -> dict:
     min_size = args.get("min_size")
     max_size = args.get("max_size")
     location = args.get("location")
-    sort = args.get("sort")
     limit = min(int(args.get("limit", 5)), 5)
     offset = max(int(args.get("offset", 0)), 0)
 
@@ -128,16 +127,13 @@ async def search_units_handler(db: AsyncSession, args: dict, ctx: dict) -> dict:
     if price_filter_applied:
         stmt = stmt.where(agg.c.unit_min_price.is_not(None))
 
-    if sort == "conviction":
-        # "best 1-bedroom in Dubai" — rank matching projects by Alpha Verdict conviction.
-        stmt = (stmt.outerjoin(ProjectAlphaVerdict, ProjectAlphaVerdict.project_id == Project.id)
-                    .order_by(ProjectAlphaVerdict.conviction.desc().nullslast(), Project.id))
-    elif sort == "price_desc":
-        stmt = stmt.order_by(agg.c.unit_min_price.desc().nulls_last(), Project.id)
-    elif sort == "price_asc" or price_filter_applied:
-        stmt = stmt.order_by(agg.c.unit_min_price.asc().nulls_last(), Project.id)
-    else:
-        stmt = stmt.order_by(Project.id)
+    # CONVICTION-FIRST RANKING (standing product rule): lead with the highest Alpha Verdict
+    # conviction, price ascending (the matching units' entry price) as the tiebreaker — server-side.
+    # LEFT JOIN so unscored projects still appear last (NULLS LAST).
+    stmt = (stmt.outerjoin(ProjectAlphaVerdict, ProjectAlphaVerdict.project_id == Project.id)
+                .order_by(ProjectAlphaVerdict.conviction.desc().nullslast(),
+                          agg.c.unit_min_price.asc().nulls_last(),
+                          Project.id))
 
     # Fetch limit+1 to detect has_more without a separate COUNT.
     stmt = stmt.offset(offset).limit(limit + 1)
@@ -204,7 +200,9 @@ registry.register(Tool(
         "'penthouses over 2000 sqft'. Do NOT use search_projects for these — search_projects "
         "only filters project-level fields and cannot match bedrooms or unit type. "
         "Returns matching projects (same shape as search_projects) plus a 'matched_units' "
-        "block per project describing the units that matched."
+        "block per project describing the units that matched. Results come back ALREADY RANKED by "
+        "Alpha Verdict conviction (highest first; the matching units' price ascending breaks ties), "
+        "and each card shows its conviction score and BUY/WATCH/SKIP — present them in order; don't re-sort."
     ),
     input_schema={
         "type": "object",
@@ -248,15 +246,6 @@ registry.register(Tool(
             "location": {
                 "type": "string",
                 "description": "Optional location filter matched across city, region, district, country. E.g. 'Dubai Marina', 'Dubai'.",
-            },
-            "sort": {
-                "type": "string",
-                "enum": ["price_asc", "price_desc", "conviction"],
-                "description": (
-                    "Sort order. 'conviction' ranks by Alpha Verdict conviction — use for 'best "
-                    "1-bedroom in Dubai', 'top studios', 'best-value 2-beds'. 'price_asc' = lowest "
-                    "first, 'price_desc' = highest first. Defaults to lowest-first when a price bound is set."
-                ),
             },
             "limit": {
                 "type": "integer",

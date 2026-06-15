@@ -74,7 +74,7 @@ def _format_cards(cards: list[dict]) -> str:
             items = c.get("items", [])
             if not items:
                 continue
-            lines.append(f"\n📋 *Projects* ({len(items)} shown" +
+            lines.append(f"\n📋 *Projects* (ranked by Alpha conviction — {len(items)} shown" +
                          (", more available" if c.get("has_more") else "") + "):")
             for p in items:
                 price = ""
@@ -82,7 +82,27 @@ def _format_cards(cards: list[dict]) -> str:
                     price = f" — {p.get('currency') or ''} {int(p['min_price']):,}–{int(p['max_price']):,}"
                 loc = p.get("city") or p.get("region") or ""
                 dev = p.get("developer") or ""
-                lines.append(f"  • *{p.get('name')}* ({dev}, {loc}){price}")
+                # Lead each card with its Alpha conviction score (the reason it ranks where it does).
+                conv = p.get("conviction")
+                if conv is not None:
+                    vbadge = {"BUY": "🟢", "WATCH": "🟡", "SKIP": "🔴"}.get(p.get("verdict"), "•")
+                    score = f" {vbadge} {(p.get('verdict') + ' ') if p.get('verdict') else ''}{conv}/100"
+                else:
+                    score = ""
+                dist = f" · {p['distance_km']}km" if p.get("distance_km") is not None else ""
+                lines.append(f"  •{score} *{p.get('name')}* ({dev}, {loc}){price}{dist}")
+        elif kind == "investment_comparison":
+            items = c.get("items", [])
+            if items:
+                lines.append("\n⚖️ *Head-to-head* (Alpha conviction on each):")
+                for p in items:
+                    conv = p.get("conviction")
+                    if conv is not None:
+                        vbadge = {"BUY": "🟢", "WATCH": "🟡", "SKIP": "🔴"}.get(p.get("verdict"), "•")
+                        score = f" {vbadge} {(p.get('verdict') + ' ') if p.get('verdict') else ''}{conv}/100"
+                    else:
+                        score = ""
+                    lines.append(f"  •{score} *{p.get('name')}*")
         elif kind == "document_quotes":
             items = c.get("items", [])
             if items:

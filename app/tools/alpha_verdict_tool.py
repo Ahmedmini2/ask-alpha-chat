@@ -64,7 +64,8 @@ registry.register(Tool(
         "investment', 'what's the verdict / conviction / score', or 'the numbers on X'. Identify the "
         "project by project_id (preferred) or project_name; or pass price + community for a "
         "hypothetical. Lead with the verdict + conviction, then the standout number. To rank/compare "
-        "many projects by verdict, use search_projects/search_units with sort='conviction' instead."
+        "many projects by verdict, use search_projects/search_units — their results are already "
+        "ranked by Alpha Verdict conviction (highest first)."
     ),
     input_schema={
         "type": "object",

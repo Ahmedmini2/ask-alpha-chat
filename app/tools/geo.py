@@ -2,7 +2,7 @@ import re
 from typing import Optional
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.db.models import Project
+from app.db.models import Project, ProjectAlphaVerdict
 from app.tools.projects import _serialize_project_summary
 from app.tools.registry import Tool, registry
 
@@ -70,9 +70,10 @@ async def search_nearby_projects_handler(db: AsyncSession, args: dict, ctx: dict
         text(f"""
             SELECT p.id, {_HAVERSINE} AS distance_km
             FROM projects p
+            LEFT JOIN project_alpha_verdict pav ON pav.project_id = p.id
             WHERE p.is_published = true AND p.lat IS NOT NULL AND p.lng IS NOT NULL
               AND {_HAVERSINE} <= :radius
-            ORDER BY distance_km ASC
+            ORDER BY distance_km ASC, pav.conviction DESC NULLS LAST, p.min_price ASC NULLS LAST, p.id ASC
             OFFSET :off LIMIT :lim
         """),
         params,
@@ -92,6 +93,15 @@ async def search_nearby_projects_handler(db: AsyncSession, args: dict, ctx: dict
     objs = (await db.execute(select(Project).where(Project.id.in_(ids)))).scalars().all()
     by_id = {o.id: o for o in objs}
 
+    # Attach the Alpha Verdict to each card so the conviction score is visible on every property
+    # card (proximity stays nearest-first; conviction only breaks distance ties in the SQL above).
+    vrows = (await db.execute(
+        select(ProjectAlphaVerdict.project_id, ProjectAlphaVerdict.verdict,
+               ProjectAlphaVerdict.conviction)
+        .where(ProjectAlphaVerdict.project_id.in_(ids))
+    )).all()
+    vmap = {pid: (verd, float(conv)) for pid, verd, conv in vrows}
+
     projects = []
     for r in rows:  # preserve distance order
         p = by_id.get(r["id"])
@@ -99,6 +109,9 @@ async def search_nearby_projects_handler(db: AsyncSession, args: dict, ctx: dict
             continue
         summary = _serialize_project_summary(p)
         summary["distance_km"] = dist_by_id[r["id"]]
+        _vc = vmap.get(p.id)
+        summary["verdict"] = _vc[0] if _vc else None
+        summary["conviction"] = round(_vc[1]) if _vc else None
         projects.append(summary)
 
     return {

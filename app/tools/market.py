@@ -3,7 +3,7 @@ import re
 from typing import Any, Optional
 from sqlalchemy import text, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.db.models import Project
+from app.db.models import Project, ProjectAlphaVerdict
 from app.tools.registry import Tool, registry
 
 # Market medians are AED per square METRE; our project_units prices are AED per
@@ -275,6 +275,22 @@ async def compare_projects_handler(db: AsyncSession, args: dict, ctx: dict) -> d
             analyses.append(await _analyze_one(db, p))
     if not analyses:
         return {"found": False, "message": "None of those project IDs were found."}
+    # Attach the Alpha Verdict to each compared project so the conviction score is visible on every
+    # card. A user-picked head-to-head keeps the user's chosen order — we don't re-rank it (the
+    # conviction-first rule governs discovery lists, not a deliberately-ordered comparison).
+    aids = [a["project_id"] for a in analyses if a.get("project_id") is not None]
+    vmap: dict = {}
+    if aids:
+        vrows = (await db.execute(
+            select(ProjectAlphaVerdict.project_id, ProjectAlphaVerdict.verdict,
+                   ProjectAlphaVerdict.conviction)
+            .where(ProjectAlphaVerdict.project_id.in_(aids))
+        )).all()
+        vmap = {pid: (verd, float(conv)) for pid, verd, conv in vrows}
+    for a in analyses:
+        _vc = vmap.get(a.get("project_id"))
+        a["verdict"] = _vc[0] if _vc else None
+        a["conviction"] = round(_vc[1]) if _vc else None
     return {"found": True, "count": len(analyses), "projects": analyses}
 
 

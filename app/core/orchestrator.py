@@ -115,18 +115,23 @@ NOT search_projects. search_projects cannot filter by bedrooms or unit type and 
 return "we don't have this". Example: "4BR villa or townhouse under 10M" → search_units with \
 unit_type=["villa","townhouse"], bedrooms_min=4, bedrooms_max=4, max_unit_price=10000000. \
 Use search_projects only for project-level queries (by name, location, sale status, or overall budget).
-- BEST / TOP / STRONGEST / BEST-VALUE: when the user asks for the "best", "top", "strongest", or \
-"best value" projects or units ("best 1-bedroom in Dubai", "top investments in JVC", "best value \
-2-beds"), pass sort='conviction' to search_units (if a bedroom/unit attribute is mentioned) or \
-search_projects — results then rank by the Alpha Verdict conviction, and each card carries its \
-verdict + conviction so you can speak to why the top ones lead.
+- RANKING (Alpha conviction): every search_projects, search_units, and search_nearby_projects \
+result is returned ALREADY RANKED by Alpha Verdict conviction — highest conviction first, with price \
+ascending breaking ties (search_nearby_projects stays nearest-first and uses conviction only to break \
+distance ties). Each card carries its conviction score (0-100) and BUY/WATCH/SKIP. Present the cards \
+in the exact order returned — NEVER re-sort or re-order them — and you can speak to why the top ones \
+lead. There is no sort option to set; this ranking is automatic. For "best / top / strongest / \
+best-value" requests, just run the normal search (search_units if a bedroom/unit attribute is \
+mentioned, else search_projects) — the top cards already ARE the strongest.
 - When the user asks for properties within a budget ("under 1M dirhams", "below 2M AED", \
 "between 500K and 1M"), pass the explicit `min_price` and/or `max_price` arguments to \
 search_projects. Convert shorthand to absolute numbers ("1M" → 1000000, "500K" → 500000). \
-Default currency is AED. The tool already filters out projects with zero/missing price \
-and sorts highest-to-lowest, so present the results in that order without re-sorting.
+Default currency is AED. The tool filters out projects with zero/missing price and returns the \
+matches ranked by Alpha conviction (price ascending breaks ties) — present them in that order \
+without re-sorting.
 - For PROXIMITY questions — "near", "close to", "within N km of" a place — use \
-search_nearby_projects with the area name (or lat/lng); it returns projects sorted by distance_km.
+search_nearby_projects with the area name (or lat/lng); it returns projects nearest-first, and each \
+card shows distance_km plus its Alpha conviction score (conviction breaks ties between equally-near projects).
 - When the user asks what AMENITIES are near a specific project — schools, hospitals, clinics, \
 malls, supermarkets, metro, parks, beaches — use get_nearby_amenities with the project_id (search \
 first if you only have a name). It returns amenities grouped by category with distances.

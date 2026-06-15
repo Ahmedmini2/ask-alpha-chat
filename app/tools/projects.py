@@ -66,7 +66,6 @@ async def search_projects_handler(db: AsyncSession, args: dict, ctx: dict) -> di
     sale_status = args.get("sale_status")
     min_price = args.get("min_price")
     max_price = args.get("max_price")
-    sort = args.get("sort")
     limit = min(int(args.get("limit", 5)), 5)
     offset = max(int(args.get("offset", 0)), 0)
 
@@ -101,29 +100,29 @@ async def search_projects_handler(db: AsyncSession, args: dict, ctx: dict) -> di
     if max_price is not None:
         stmt = stmt.where(Project.min_price <= float(max_price))
 
-    if sort == "conviction":
-        # "best / top / strongest" — rank by the stored Alpha Verdict conviction (LEFT JOIN so
-        # unscored projects still appear, last). NULLS LAST keeps them out of the top.
-        stmt = (stmt.outerjoin(ProjectAlphaVerdict, ProjectAlphaVerdict.project_id == Project.id)
-                    .order_by(ProjectAlphaVerdict.conviction.desc().nullslast(), Project.id))
-    elif sort == "price_desc" or (price_filter_applied and sort is None):
-        stmt = stmt.order_by(Project.min_price.desc(), Project.id)
-    elif sort == "price_asc":
-        stmt = stmt.order_by(Project.min_price.asc(), Project.id)
-    elif query:
-        # Rank NAME matches above projects matched only via their description prose. Without
-        # this, a project whose description merely MENTIONS the query (e.g. "near Damac
-        # Lagoons") could outrank — or hide — the actual project, which is how "Damac Lagoons"
-        # resolved to an unrelated project. exact name → name-prefix → name-contains → desc-only.
+    # CONVICTION-FIRST RANKING (standing product rule): every result list leads with the highest
+    # Alpha Verdict conviction, with price ascending as the tiebreaker — computed server-side here,
+    # never in the UI. LEFT JOIN so unscored projects still appear (last, via NULLS LAST).
+    stmt = stmt.outerjoin(ProjectAlphaVerdict, ProjectAlphaVerdict.project_id == Project.id)
+    order_cols = [
+        ProjectAlphaVerdict.conviction.desc().nullslast(),
+        Project.min_price.asc().nullslast(),
+        Project.id,
+    ]
+    if query:
+        # For a NAME/text search, keep name-match relevance as the TOP key so the actual project a
+        # user named can't be outranked by an unrelated, higher-conviction project that merely
+        # MENTIONS the name in its prose (e.g. "near Damac Lagoons" — the documented Damac Lagoons
+        # fix). Conviction then orders within each relevance tier:
+        # exact name → name-prefix → name-contains → desc-only.
         relevance = case(
             (Project.name.ilike(query), 0),
             (Project.name.ilike(f"{query}%"), 1),
             (Project.name.ilike(f"%{query}%"), 2),
             else_=3,
         )
-        stmt = stmt.order_by(relevance, Project.id)
-    else:
-        stmt = stmt.order_by(Project.id)
+        order_cols.insert(0, relevance)
+    stmt = stmt.order_by(*order_cols)
 
     # Fetch limit+1 to detect has_more without a separate COUNT.
     stmt = stmt.offset(offset).limit(limit + 1)
@@ -194,7 +193,9 @@ registry.register(Tool(
     description=(
         "Search the real estate project database by name, location, or sale status. "
         "Use this when the user mentions a project name or asks to find projects matching criteria. "
-        "Returns matching projects with summary information."
+        "Returns matching projects with summary information. Results come back ALREADY RANKED by "
+        "Alpha Verdict conviction (highest first; price ascending breaks ties), and each card shows "
+        "its conviction score and BUY/WATCH/SKIP — present them in the order returned; don't re-sort."
     ),
     input_schema={
         "type": "object",
@@ -232,16 +233,6 @@ registry.register(Tool(
                     "specifies a budget ceiling, e.g. 'under 1M dirhams' → max_price=1000000. "
                     "Projects with NULL or zero min_price are excluded when this or min_price is "
                     "set, since those are missing data, not real prices."
-                ),
-            },
-            "sort": {
-                "type": "string",
-                "enum": ["price_desc", "price_asc", "conviction"],
-                "description": (
-                    "Optional sort. 'conviction' ranks by Alpha Verdict conviction (use for "
-                    "'best / top / strongest / best-value' requests). 'price_desc' = highest to "
-                    "lowest, 'price_asc' = lowest to highest. When a price filter is set and sort "
-                    "is omitted, results default to highest-to-lowest."
                 ),
             },
             "limit": {
