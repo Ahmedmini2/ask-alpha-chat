@@ -6,7 +6,43 @@ import pytest
 from app.tools.videos import (
     _campaign_brief,
     _compose_background_prompt,
+    _to_spoken_money,
 )
+
+
+# ----------------------------- _to_spoken_money -----------------------------
+
+def test_aed_before_amount_becomes_dirhams_after():
+    assert _to_spoken_money("Starting price AED 1.35 million today.") == \
+        "Starting price 1.35 million dirhams today."
+
+
+def test_aed_after_amount_becomes_dirhams():
+    assert _to_spoken_money("From 850 thousand AED only.") == "From 850 thousand dirhams only."
+
+
+def test_magnitude_abbreviations_are_spelled_out():
+    assert _to_spoken_money("Just AED 1.4M now.") == "Just 1.4 million dirhams now."
+    assert _to_spoken_money("From AED 850K.") == "From 850 thousand dirhams."
+
+
+def test_plain_numeric_amount_keeps_commas():
+    assert _to_spoken_money("Priced from AED 1,350,000 today.") == \
+        "Priced from 1,350,000 dirhams today."
+
+
+def test_no_currency_is_unchanged():
+    assert _to_spoken_money("Submit your EOI today.") == "Submit your EOI today."
+
+
+def test_never_leaves_the_aed_code():
+    out = _to_spoken_money("From AED1.1M to AED 2.3 million in AED.")
+    assert "AED" not in out
+    assert "dirhams" in out
+
+
+def test_empty_script_safe():
+    assert _to_spoken_money("") == ""
 
 
 class FakeUnit:

@@ -1,6 +1,7 @@
 import asyncio
 import io
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
@@ -35,13 +36,15 @@ famous nearby landmark (Yas Island, Downtown Dubai, Palm Jumeirah, Dubai Marina,
 3–5 concrete numbers — total sqft, tree count, % green, amenities, distances. Use spoken connectives \
 sparingly: "we're talking about…", "and here's the best part…", "now picture this…" (max one or two).
 
-3. CTA (1–2 sentences, ~25–45 words). State the starting price (e.g., "AED 1.35 million") and the \
-payment plan (e.g., "60/40 plan"). Frame the price as "the best entry point" rather than "affordable". \
-End with the action: "Submit your EOI today to get priority access."
+3. CTA (1–2 sentences, ~25–45 words). State the starting price and the payment plan (e.g., "60/40 \
+plan"). Frame the price as "the best entry point" rather than "affordable". End with the action: \
+"Submit your EOI today to get priority access."
 
 VOICE & RHYTHM:
 - Spoken, NOT read. Contractions mandatory ("it's", "we're", "you're").
-- Numbers must be speakable: "38 million square feet", "AED 1.35 million" — never "38,000,000".
+- Numbers must be speakable: "38 million square feet", "1.35 million dirhams" — never "38,000,000".
+- CURRENCY: always say prices in spoken "dirhams" AFTER the amount ("1.35 million dirhams"). NEVER \
+write the code "AED" — the avatar voice cannot pronounce it. Never use "$" or "USD".
 - Short sentences. Breath units. Drop adjectives, keep nouns and numbers.
 - Landmarks do the work of adjectives.
 - End on urgency, never volume. "Submit your EOI today" beats "Don't miss out!"
@@ -177,10 +180,13 @@ async def _write_campaign_scripts(project: Project) -> list[str]:
     return scripts
 
 
-def _compose_background_prompt(project: Project, user_prompt: str) -> str:
-    """Build the text-to-image prompt for the 9:16 background plate that HeyGen composites
+def _compose_background_prompt(project: Project, user_prompt: str, aspect_ratio: str = "9:16") -> str:
+    """Build the text-to-image prompt for the background plate that HeyGen composites
     the avatar in front of. Describe the SCENE ONLY — no people — and always append a
     cinematic style suffix. The avatar stands in the foreground, so we keep it clear.
+
+    The composition note matches the video's orientation (portrait 9:16 vs landscape 16:9)
+    so the generated plate frames correctly behind the avatar.
 
     When the agent gave a background description we lead with it; otherwise we fall back to
     a generic premium setting tied to the project's location.
@@ -197,11 +203,57 @@ def _compose_background_prompt(project: Project, user_prompt: str) -> str:
             f"A modern, premium real-estate setting {where} suiting the {project.name} "
             "development — contemporary architecture, manicured landscaping, elegant amenity spaces"
         )
+    composition = ("horizontal 16:9 composition" if aspect_ratio == "16:9"
+                   else "vertical 9:16 composition")
     bits.append(
         "photorealistic, cinematic, shallow depth of field, golden-hour lighting, "
-        "vertical 9:16 composition, no people, clear foreground for a presenter"
+        f"{composition}, no people, clear foreground for a presenter"
     )
     return ", ".join(bits)[:1400]  # Stability core prompt budget
+
+
+# Magnitude abbreviations a TTS voice mangles ("1.4M" -> "one point four em"); we spell them.
+_MAGNITUDE = {"m": "million", "k": "thousand", "b": "billion", "bn": "billion"}
+_ABBR_RE = re.compile(r"(\d(?:[\d,.]*\d)?)\s*(bn|[mkb])\b", re.IGNORECASE)
+_AED_BEFORE_RE = re.compile(
+    r"\bAED\s*((?:\d[\d,.]*)(?:\s*(?:million|billion|thousand))?)", re.IGNORECASE)
+_AED_AFTER_RE = re.compile(
+    r"((?:\d[\d,.]*)(?:\s*(?:million|billion|thousand))?)\s*AED\b", re.IGNORECASE)
+
+
+def _to_spoken_money(script: str) -> str:
+    """Make currency amounts SPEAKABLE for the avatar voice. The TTS can't pronounce the
+    'AED' code (it spells it out or stumbles), so every AED becomes the spoken word
+    'dirhams', placed AFTER the amount the way a person says it ('AED 1.4 million' -> '1.4
+    million dirhams'). Magnitude abbreviations (1.4M, 850K) are spelled out first so they're
+    speakable too. Idempotent and safe to run on any final script."""
+    if not script:
+        return script
+    s = _ABBR_RE.sub(lambda m: f"{m.group(1)} {_MAGNITUDE[m.group(2).lower()]}", script)
+    s = _AED_BEFORE_RE.sub(lambda m: f"{m.group(1).strip()} dirhams", s)
+    s = _AED_AFTER_RE.sub(lambda m: f"{m.group(1).strip()} dirhams", s)
+    s = re.sub(r"\bAED\b", "dirhams", s, flags=re.IGNORECASE)  # any standalone leftover
+    return re.sub(r"\s{2,}", " ", s).strip()
+
+
+async def _look_aspect_ratio(look: dict) -> tuple[str, str]:
+    """Match the video's orientation to the chosen look. HeyGen looks carry no orientation
+    field, so we read the look's preview image: wider-than-tall -> landscape 16:9, else
+    portrait 9:16. Falls back to portrait (our default) when the image can't be read.
+    Returns (aspect_ratio, orientation_label)."""
+    url = (look or {}).get("preview_url")
+    if url:
+        data = await _fetch_bytes(url)
+        if data:
+            try:
+                from PIL import Image
+                w, h = Image.open(io.BytesIO(data)).size
+                if w and h and w > h:
+                    return "16:9", "landscape"
+                return "9:16", "portrait"
+            except Exception as e:  # pragma: no cover — Pillow missing / corrupt image
+                log.warning("look orientation detect failed (%s); defaulting portrait", e)
+    return "9:16", "portrait"
 
 
 def _agent_full_name(profile) -> str:
@@ -433,19 +485,27 @@ async def create_promo_video_handler(db: AsyncSession, args: dict, ctx: dict) ->
         if not explicit_script:
             return {"error": "Failed to write a campaign script. Try again or provide one."}
 
+    # The avatar voice can't pronounce "AED" — convert every amount to spoken "dirhams"
+    # (and spell magnitude abbreviations) on the FINAL script, whoever wrote it.
+    explicit_script = _to_spoken_money(explicit_script)
+
+    # Match the video orientation to the chosen look (portrait vs landscape), and build the
+    # background plate at the SAME aspect so it frames correctly behind the avatar.
+    aspect_ratio, orientation = await _look_aspect_ratio(chosen)
+
     # Build the background plate HeyGen composites the avatar in front of: ALWAYS an
-    # AI-generated 9:16 image (purpose-built — no people, clear foreground), uploaded to
-    # HeyGen's own asset store so HeyGen can always fetch it. We deliberately do NOT fall
-    # back to project.cover_image_url — that's a Reelly-origin URL (forbidden as a fetch
-    # source, and prone to 403/expiry on HeyGen's server-side fetch). On any failure we
-    # drop the override and keep the avatar's default scene rather than fail the whole job.
-    # This is the REAL background swap; the old Video-Agent path took the scene as free
-    # text and silently ignored it, which is why the background never changed.
+    # AI-generated image (purpose-built — no people, clear foreground), uploaded to HeyGen's
+    # own asset store so HeyGen can always fetch it. We deliberately do NOT fall back to
+    # project.cover_image_url — that's a Reelly-origin URL (forbidden as a fetch source, and
+    # prone to 403/expiry on HeyGen's server-side fetch). On any failure we drop the override
+    # and keep the avatar's default scene rather than fail the whole job. This is the REAL
+    # background swap; the old Video-Agent path took the scene as free text and silently
+    # ignored it, which is why the background never changed.
     background_url: Optional[str] = None
     background_source = "avatar default scene"
-    scene_prompt = _compose_background_prompt(project, background_prompt)
+    scene_prompt = _compose_background_prompt(project, background_prompt, aspect_ratio)
     try:
-        png = await bedrock_images.generate_background_png(scene_prompt, aspect_ratio="9:16")
+        png = await bedrock_images.generate_background_png(scene_prompt, aspect_ratio=aspect_ratio)
         background_url = await heygen.upload_asset(png, content_type="image/png")
         background_source = (
             f"AI image: {background_prompt[:80]}" if background_prompt
@@ -462,7 +522,7 @@ async def create_promo_video_handler(db: AsyncSession, args: dict, ctx: dict) ->
             voice_id=voice["voice_id"],
             background_url=background_url,
             resolution="1080p",
-            aspect_ratio="9:16",
+            aspect_ratio=aspect_ratio,
             # Emit a CLEAN video (no HeyGen burn-in). Captions are added afterward by the
             # Descript post-step in the poller (when DESCRIPT_API_TOKEN is set); HeyGen's own
             # captions are un-positionable and ran off-screen, so they stay off here. If you
@@ -507,9 +567,9 @@ async def create_promo_video_handler(db: AsyncSession, args: dict, ctx: dict) ->
     await db.commit()
 
     log.info(
-        "video job started id=%s heygen=%s project=%s by=%s for=%s look=%r avatar=%s photo=%s voice=%s(%s) bg=%s tg=%s",
+        "video job started id=%s heygen=%s project=%s by=%s for=%s look=%r avatar=%s photo=%s voice=%s(%s) bg=%s aspect=%s tg=%s",
         video_id, heygen_video_id, project.id, user_id, name_used, chosen["look_name"],
-        chosen["avatar_id"], chosen["is_photo"], voice.get("voice_id"), voice_source, background_source, tg_chat_id,
+        chosen["avatar_id"], chosen["is_photo"], voice.get("voice_id"), voice_source, background_source, aspect_ratio, tg_chat_id,
     )
     return {
         "video_id": str(video_id),
@@ -523,7 +583,10 @@ async def create_promo_video_handler(db: AsyncSession, args: dict, ctx: dict) ->
         "avatar_name": name_used,
         "voice_name": voice.get("name"),
         "background": background_source,
-        "format": "1080x1920 vertical (Reels/TikTok)",
+        "orientation": orientation,
+        "aspect_ratio": aspect_ratio,
+        "format": ("1920x1080 landscape (16:9)" if aspect_ratio == "16:9"
+                   else "1080x1920 portrait (9:16, Reels/TikTok)"),
         "delivery_channel": "telegram" if on_telegram else "web",
         "message": "Video generation started. Typical wait is 1–2 minutes. " + delivery,
     }

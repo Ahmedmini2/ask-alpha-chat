@@ -55,7 +55,9 @@ class Settings(BaseSettings):
     descript_caption_prompt: str = (
         "Add bold, animated, word-by-word karaoke-style captions to the entire video — "
         "large, centered, in the lower third, one or two words highlighted at a time. "
-        "Do not change anything else about the video."
+        "Keep captions short: never show more than 2 lines on screen at once, and at most "
+        "4 words per line — break the text into more, shorter caption segments rather than "
+        "long lines. Do not change anything else about the video."
     )
     descript_caption_resolution: str = "1080p"
     descript_caption_concurrency: int = 1  # Descript jobs are heavy; default one at a time
