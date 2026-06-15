@@ -42,7 +42,7 @@ async def _get(path: str, params: dict | None = None) -> Any:
     if not configured():
         raise PropertyMonitorError("Property Monitor API keys are not configured.")
     url = f"{settings.pm_base_url}{path}"
-    async with httpx.AsyncClient(timeout=40.0, headers=_headers()) as client:
+    async with httpx.AsyncClient(timeout=40.0, headers=_headers(), http2=True) as client:
         resp = await client.get(url, params={k: v for k, v in (params or {}).items() if v is not None})
         if resp.status_code >= 400:
             raise PropertyMonitorError(f"GET {path} -> {resp.status_code}: {resp.text[:200]}")
@@ -53,7 +53,7 @@ async def _post(path: str, body: dict) -> Any:
     if not configured():
         raise PropertyMonitorError("Property Monitor API keys are not configured.")
     url = f"{settings.pm_base_url}{path}"
-    async with httpx.AsyncClient(timeout=40.0, headers=_headers()) as client:
+    async with httpx.AsyncClient(timeout=40.0, headers=_headers(), http2=True) as client:
         resp = await client.post(url, json=body)
         if resp.status_code >= 400:
             raise PropertyMonitorError(f"POST {path} -> {resp.status_code}: {resp.text[:200]}")

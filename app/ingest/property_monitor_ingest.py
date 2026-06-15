@@ -62,40 +62,26 @@ def _extract_avm(report: dict) -> dict:
     }
 
 
-def _deep_find_number(obj: Any, key_substrings: tuple[str, ...]) -> Optional[float]:
-    """Best-effort: walk a payload for the first numeric value whose key contains any substring.
-    Used to pull yield / YoY-appreciation from market-trends until the exact shape is pinned on a
-    live run."""
-    if isinstance(obj, dict):
-        for k, v in obj.items():
-            kl = str(k).lower()
-            if any(sub in kl for sub in key_substrings):
-                n = _num(v)
-                if n is not None:
-                    return n
-            found = _deep_find_number(v, key_substrings)
-            if found is not None:
-                return found
-    elif isinstance(obj, list):
-        for it in obj:
-            found = _deep_find_number(it, key_substrings)
-            if found is not None:
-                return found
+def _extract_appreciation(trends: Any) -> Optional[float]:
+    """Annual appreciation (decimal) from the sales market-trends series — the LAST monthly point's
+    `yoy_change` (a percent like '4.78'). PM's market-trends is a monthly index list (mn/yr/
+    index_value/price_sqft/yoy_change), oldest→newest. PM does NOT return a rental yield via these
+    endpoints, so gross yield stays from our model."""
+    d = _unwrap(trends)
+    if isinstance(d, list) and d:
+        last = d[-1] if isinstance(d[-1], dict) else {}
+        yoy = _num(last.get("yoy_change"))
+        if yoy is not None:
+            return yoy / 100.0
     return None
 
 
-def _extract_yield_appreciation(trends: Any) -> tuple[Optional[float], Optional[float]]:
-    """Derive a community gross yield (decimal) and YoY appreciation (decimal) from market-trends.
-    Best-effort + defensive; refine the key list after the first live payload is seen."""
+def _extract_trend_ppsf(trends: Any) -> Optional[float]:
+    """Latest transaction price/sqft from the sales market-trends series (fallback for ppsf)."""
     d = _unwrap(trends)
-    y = _deep_find_number(d, ("grossyield", "gross_yield", "yield"))
-    a = _deep_find_number(d, ("yoy", "appreciation", "growth", "annualchange", "change_pct"))
-    # Normalize percentages (e.g. 6.2) to decimals (0.062).
-    if y is not None and y > 1:
-        y = y / 100.0
-    if a is not None and abs(a) > 1:
-        a = a / 100.0
-    return y, a
+    if isinstance(d, list) and d and isinstance(d[-1], dict):
+        return _num(d[-1].get("price_sqft"))
+    return None
 
 
 # --------------------------------------------------------------------------- community ingest
@@ -115,16 +101,30 @@ async def _communities() -> list[tuple[str, str]]:
 
 
 def _pick_location(candidates: list[dict], community_name: str) -> Optional[dict]:
+    """Pick an AVM-CAPABLE building/tower (avm_status=1, level 3) in the community — the
+    community-level entry itself can't run an AVM (PM 500s). Prefer apartments whose
+    master_development matches; fall back progressively."""
     if not candidates:
         return None
     cl = community_name.lower()
-    apts = [c for c in candidates if (c.get("location_unit_type") or "").lower() == "apartment"]
-    pool = apts or candidates
-    # Prefer the master-development that matches the community name.
+
+    def avm_ok(c):
+        return c.get("avm_status") in (1, "1")
+
+    def is_building(c):
+        return str(c.get("level")) == "3" and (c.get("name") or "").lower() != cl
+
+    buildings = [c for c in candidates if avm_ok(c) and is_building(c)]
+    apts = [c for c in buildings if (c.get("location_unit_type") or "").lower() == "apartment"]
+    pool = apts or buildings
     for c in pool:
         if (c.get("master_development") or "").lower() == cl:
             return c
-    return pool[0]
+    if pool:
+        return pool[0]
+    # last resort: any avm-capable candidate
+    any_avm = [c for c in candidates if avm_ok(c)]
+    return any_avm[0] if any_avm else None
 
 
 async def _upsert_raw(table: str, slug: str, report_hash: str, raw: Any) -> None:
@@ -214,12 +214,16 @@ async def _ingest_one_community(slug: str, district: str) -> str:
     except Exception as e:
         log.warning("about-location for %s failed: %s", slug, e)
 
-    gross_yield, appreciation = _extract_yield_appreciation(trends_raw) if trends_raw else (None, None)
+    # Real PM stats: appreciation from the sales index (latest yoy_change); ppsf from the AVM's
+    # indexed community average (fallback to the latest trend price/sqft). PM has no rental yield
+    # via these endpoints, so gross_yield stays NULL and the verdict keeps the model yield.
+    appreciation = _extract_appreciation(trends_raw) if trends_raw else None
+    ppsf = avm["ppsf_aed"] or (_extract_trend_ppsf(trends_raw) if trends_raw else None)
     label = COMMUNITY_DATA.get(slug, {}).get("label") or district
     async with AsyncSessionLocal() as db:
         stmt = pg_insert(PmCommunityStats).values(
-            community_slug=slug, community_label=label, gross_yield=gross_yield,
-            appreciation=appreciation, ppsf_aed=avm["ppsf_aed"],
+            community_slug=slug, community_label=label, gross_yield=None,
+            appreciation=appreciation, ppsf_aed=ppsf,
             service_charge_aed_sqft=avm["service_charge_aed_sqft"], sample_n=None,
             updated_at=datetime.now(timezone.utc))
         stmt = stmt.on_conflict_do_update(
@@ -255,9 +259,89 @@ async def ingest_communities(limit: Optional[int] = None, concurrency: Optional[
     return stats
 
 
+# --------------------------------------------------------------------------- per-PROJECT AVM
+
+async def _ingest_project_report(project_id: int, slug: str, location_id: int) -> str:
+    """Run a project-specific AVM: preflight the project's ENTRY UNIT (size/beds) against its
+    community's PM location, then consumer-avm, and upsert pm_reports(project_id)."""
+    from app.analytics.alpha_verdict import _entry_unit_sql
+    from app.db.models import Project
+    from sqlalchemy import select as _select
+    async with AsyncSessionLocal() as db:
+        proj = (await db.execute(_select(Project).where(Project.id == project_id))).scalar_one_or_none()
+        if proj is None:
+            return "skip"
+        _price, beds, sqft = await _entry_unit_sql(db, proj)
+    sqft = sqft or settings.pm_default_size_sqft
+    beds_s = str(int(beds)) if beds else settings.pm_default_bedrooms
+    pre = _unwrap(await pm.create_avm(
+        location_id=location_id, unit_size_sqft=sqft,
+        property_type_id=settings.pm_default_property_type_id, bedrooms=beds_s))
+    rh = (pre or {}).get("reportHash")
+    if not rh:
+        return "no-hash"
+    avm = _extract_avm(await pm.get_avm_result(rh))
+    async with AsyncSessionLocal() as db:
+        await db.execute(text("DELETE FROM pm_reports WHERE project_id = :pid"), {"pid": project_id})
+        await db.execute(text(
+            "INSERT INTO pm_reports (project_id, community_slug, pm_location_id, report_hash, report_id, "
+            "bedrooms, unit_size_sqft, property_type_id, valuation_aed, valuation_low_aed, "
+            "valuation_high_aed, ppsf_aed, service_charge_aed_sqft, annual_service_charge_aed, "
+            "confidence_level, confidence_score, fetched_at) VALUES "
+            "(:pid,:s,:lid,:h,:rid,:beds,:size,:ptid,:val,:low,:high,:ppsf,:sc,:asc,:cl,:cs, now())"),
+            {"pid": project_id, "s": slug, "lid": location_id, "h": rh, "rid": avm["report_id"],
+             "beds": beds_s, "size": sqft, "ptid": settings.pm_default_property_type_id,
+             "val": avm["valuation_aed"], "low": avm["valuation_low_aed"], "high": avm["valuation_high_aed"],
+             "ppsf": avm["ppsf_aed"], "sc": avm["service_charge_aed_sqft"],
+             "asc": avm["annual_service_charge_aed"], "cl": avm["confidence_level"], "cs": avm["confidence_score"]})
+        await db.commit()
+    return "ok"
+
+
+async def ingest_project_reports(limit: Optional[int] = None, concurrency: Optional[int] = None) -> dict:
+    """Per-project AVM for every priceable published project whose community has a PM location."""
+    if not pm.configured():
+        return {"error": "not_configured"}
+    async with AsyncSessionLocal() as db:
+        locs = {r.community_slug: r.pm_location_id for r in (await db.execute(text(
+            "SELECT community_slug, pm_location_id FROM pm_locations WHERE pm_location_id IS NOT NULL"
+        ))).mappings()}
+        projs = (await db.execute(text(
+            "SELECT id, district, city FROM projects WHERE is_published AND min_price IS NOT NULL ORDER BY id"
+        ))).all()
+    targets = []
+    for pid, district, city in projs:
+        lid = locs.get(canonical_community_slug(district or city or ""))
+        if lid:
+            targets.append((pid, canonical_community_slug(district or city or ""), lid))
+    if limit:
+        targets = targets[:limit]
+    log.info("PM per-project AVM: %d projects (in %d PM-covered communities)", len(targets), len(locs))
+    sem = asyncio.Semaphore(concurrency or settings.pm_ingest_concurrency)
+    stats = {"ok": 0, "no-hash": 0, "skip": 0, "error": 0}
+
+    async def _one(pid, slug, lid):
+        async with sem:
+            try:
+                stats[await _ingest_project_report(pid, slug, lid)] += 1
+            except Exception as e:
+                stats["error"] += 1
+                log.warning("project %s AVM failed: %s", pid, e)
+
+    for i in range(0, len(targets), 200):
+        await asyncio.gather(*[_one(*t) for t in targets[i:i + 200]])
+        log.info("per-project progress %d/%d %s", min(i + 200, len(targets)), len(targets), stats)
+    log.info("PM per-project AVM done: %s", stats)
+    return stats
+
+
 if __name__ == "__main__":
     import sys
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     args = sys.argv[1:]
-    lim = int(args[0]) if args and args[0].isdigit() else None
-    asyncio.run(ingest_communities(limit=lim))
+    if args and args[0] == "projects":
+        lim = int(args[1]) if len(args) > 1 and args[1].isdigit() else None
+        asyncio.run(ingest_project_reports(limit=lim))
+    else:
+        lim = int(args[0]) if args and args[0].isdigit() else None
+        asyncio.run(ingest_communities(limit=lim))

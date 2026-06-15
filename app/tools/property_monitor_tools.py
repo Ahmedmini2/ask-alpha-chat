@@ -105,11 +105,19 @@ async def get_live_market_handler(db: AsyncSession, args: dict, ctx: dict) -> di
     stats = (await db.execute(text(
         "SELECT community_label, gross_yield, appreciation, ppsf_aed, service_charge_aed_sqft, updated_at "
         "FROM pm_community_stats WHERE community_slug=:s"), {"s": slug})).mappings().first()
-    rep = (await db.execute(text(
-        "SELECT valuation_aed, valuation_low_aed, valuation_high_aed, ppsf_aed, "
-        "annual_service_charge_aed, confidence_level, fetched_at FROM pm_reports "
-        "WHERE community_slug=:s AND project_id IS NULL ORDER BY fetched_at DESC LIMIT 1"),
-        {"s": slug})).mappings().first()
+    # Prefer this project's OWN AVM report; fall back to the community-level representative.
+    rep = None
+    if project_id is not None:
+        rep = (await db.execute(text(
+            "SELECT valuation_aed, valuation_low_aed, valuation_high_aed, ppsf_aed, "
+            "annual_service_charge_aed, confidence_level, fetched_at FROM pm_reports "
+            "WHERE project_id = :pid ORDER BY fetched_at DESC LIMIT 1"), {"pid": project_id})).mappings().first()
+    if rep is None:
+        rep = (await db.execute(text(
+            "SELECT valuation_aed, valuation_low_aed, valuation_high_aed, ppsf_aed, "
+            "annual_service_charge_aed, confidence_level, fetched_at FROM pm_reports "
+            "WHERE community_slug=:s AND project_id IS NULL ORDER BY fetched_at DESC LIMIT 1"),
+            {"s": slug})).mappings().first()
     sold = (await db.execute(text(
         "SELECT raw, fetched_at FROM pm_sold WHERE community_slug=:s"), {"s": slug})).mappings().first()
 
