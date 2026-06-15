@@ -57,7 +57,11 @@ Or REST: `GET {SUPABASE_URL}/rest/v1/project_alpha_verdict?project_id=eq.{id}&se
 - `pm_reports` (per `project_id` when present, else community-level): `valuation_aed`, `valuation_low_aed`, `valuation_high_aed`, `ppsf_aed`, `confidence_level`, `fetched_at`.
 - `pm_sold`, `pm_market_trends`, `pm_local_activity`, `pm_lowest_highest`, `pm_about_location`: raw PM payloads (`raw jsonb`) per community.
 
-> Note: PM ppsf/valuation are real per project/community; appreciation currently reads ~Dubai-wide; PM doesn't expose rental yield via these endpoints, so `area_rent_return_pct`/`net_yield_pct` use our model.
+> Note on data sources behind the numbers:
+> - **ppsf / valuation** — real, per project/community, from PM (this is what the comp pillar uses).
+> - **appreciation** — PM's market-trends series is a **Dubai-wide** index (one value for all areas), so for our **modeled communities** (Dubai Marina, JVC, Palm, Downtown, Business Bay, Dubai Hills, Damac Lagoons, Emaar Beachfront, Sobha Hartland, Arabian Ranches) we keep the **curated per-community** appreciation (matches the site); only **unmodeled** communities adopt PM's Dubai-wide number. So `annual_appreciation_pct` is per-community where it matters.
+> - **service charge** — PM returns `0` for communities that plainly have one (data gap), so a `0` falls back to the 18 AED/sqft default rather than inflating net yield.
+> - **rental yield** — PM doesn't expose it via these endpoints, so `area_rent_return_pct`/`net_yield_pct` use our model.
 
 ---
 
@@ -109,8 +113,11 @@ POST /v1/chat
 ---
 
 ## Freshness / ops
-- The verdict store recomputes on read if older than `alpha_verdict_max_age_days` (7) or on a new
-  `formula_version`; a full refresh runs via `python -m app.analytics.verdict_backfill`.
+- The verdict store recomputes on read if older than `alpha_verdict_max_age_days` (7), on a new
+  `formula_version`, **or if Property Monitor stats for the community were refreshed after the stored
+  verdict was computed** (`pm_community_stats.updated_at > computed_at`) — so a PM ingest is reflected
+  immediately without waiting out the age window. `stats_as_of` records when those stats were last
+  refreshed. A full refresh runs via `python -m app.analytics.verdict_backfill`.
 - PM data is refreshed by `python -m app.ingest.property_monitor_ingest` (communities) and
   `… property_monitor_ingest projects` (per-project AVMs). The runner host's IP must be
   Property-Monitor-allowlisted, and PM's API requires **HTTP/2**.

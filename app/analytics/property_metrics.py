@@ -286,10 +286,16 @@ async def _apply_sentiment(db: AsyncSession, area: str, out: dict) -> None:
 
 
 async def _apply_pm_stats(db: AsyncSession, area: str, out: dict) -> None:
-    """Override area ppsf + appreciation with REAL Property Monitor community stats when we have
-    them, so every metric path (get_investment_metrics, brochure/flyer) matches the Alpha Verdict.
-    PM has no rental yield via its endpoints, so area_yield stays from our band. Best-effort."""
-    from app.analytics.alpha_verdict import canonical_community_slug
+    """Override area ppsf with REAL per-community Property Monitor stats when we have them, so every
+    metric path (get_investment_metrics, brochure/flyer) matches the Alpha Verdict. PM has no rental
+    yield via its endpoints, so area_yield stays from our band.
+
+    PM's appreciation (from market-trends) is a DUBAI-WIDE index — the same value for every community
+    — so overriding a modeled community's curated per-community appreciation with it would erase
+    differentiation and diverge from the website/verdict. We therefore keep the per-community model
+    appreciation for modeled communities and only adopt PM's real number for UNMODELED ones (matches
+    resolve_community_db in alpha_verdict). Best-effort."""
+    from app.analytics.alpha_verdict import canonical_community_slug, COMMUNITY_DATA
     slug = canonical_community_slug(area)
     row = (await db.execute(
         text("SELECT ppsf_aed, appreciation FROM pm_community_stats WHERE community_slug = :s"),
@@ -299,7 +305,7 @@ async def _apply_pm_stats(db: AsyncSession, area: str, out: dict) -> None:
         return
     if row["ppsf_aed"] is not None:
         out["area_ppsf"] = float(row["ppsf_aed"])
-    if row["appreciation"] is not None:
+    if slug not in COMMUNITY_DATA and row["appreciation"] is not None:
         out["area_appreciation"] = float(row["appreciation"])
     out["pm_backed"] = True
 

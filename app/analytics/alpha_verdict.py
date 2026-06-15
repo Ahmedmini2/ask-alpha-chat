@@ -209,7 +209,7 @@ def _i(x):
 async def resolve_community_db(db, name: Optional[str]):
     """Build the community model used by the verdict, preferring REAL Property Monitor stats
     field-by-field and filling any gap from the static model. Returns
-    (CommunityModel, source, service_charge_per_sqft|None)."""
+    (CommunityModel, source, service_charge_per_sqft|None, pm_stats_updated_at|None)."""
     from sqlalchemy import select
     from app.db.models import PmCommunityStats
 
@@ -225,14 +225,29 @@ async def resolve_community_db(db, name: Optional[str]):
         select(PmCommunityStats).where(PmCommunityStats.community_slug == slug)
     )).scalar_one_or_none()
     if pm:
-        y = float(pm.gross_yield) if pm.gross_yield else base_yield
-        a = float(pm.appreciation) if pm.appreciation else base_app
+        # PM ppsf is genuinely per-community (real) — use it. ppsf/service-charge stay TRUTHY-guarded:
+        # a 0.0 there is "PM has no figure", not a real value — a 0 ppsf would divide-by-zero the comp
+        # pillar, and PM returns 0 service charge for communities that plainly have one (e.g. JVC), so
+        # 0 must fall back to the 18/sqft default rather than inflate net yield. PM has no rental yield,
+        # so yield stays from the model.
+        #
+        # appreciation, by contrast, uses is-not-None so a genuine FLAT market (0.0) is preserved. But
+        # PM's appreciation (market-trends) is a DUBAI-WIDE index — the same value for every community
+        # — so it would erase per-community differentiation and diverge from the website; we keep the
+        # per-community model appreciation when this community is modeled, and only use PM's real
+        # number for UNMODELED communities (better than the Dubai-Marina fallback).
+        y = float(pm.gross_yield) if pm.gross_yield is not None else base_yield
         s = float(pm.ppsf_aed) if pm.ppsf_aed else base_ppsf
         sc = float(pm.service_charge_aed_sqft) if pm.service_charge_aed_sqft else None
-        return CommunityModel(slug, pm.community_label or label, y, a, s, True), "property_monitor", sc
+        if static:
+            a = base_app                                   # per-community model (matches website)
+        else:
+            a = float(pm.appreciation) if pm.appreciation is not None else base_app
+        return (CommunityModel(slug, pm.community_label or label, y, a, s, True),
+                "property_monitor", sc, pm.updated_at)
 
     cm = CommunityModel(slug, label, base_yield, base_app, base_ppsf, bool(static))
-    return cm, ("static_model" if static else "static_fallback"), None
+    return cm, ("static_model" if static else "static_fallback"), None, None
 
 
 # Floor below which a unit's stored size is treated as bad data (else ppsf = price/200 explodes).
@@ -288,8 +303,8 @@ async def recompute_verdict(project_id: int) -> Optional[dict]:
         if project is None:
             return None
         price, beds, sqft = await _entry_unit_sql(db, project)
-        cm, source, sc = await resolve_community_db(db, project.district or project.city)
-        charges = sc if sc else DEFAULT_CHARGES_PER_SQFT
+        cm, source, sc, stats_as_of = await resolve_community_db(db, project.district or project.city)
+        charges = sc if sc is not None else DEFAULT_CHARGES_PER_SQFT
         v = compute_alpha_verdict(price=price, community=cm, beds=beds, sqft=sqft,
                                   intent=settings.alpha_verdict_intent, charges_per_sqft=charges)
         if v is None:
@@ -310,6 +325,9 @@ async def recompute_verdict(project_id: int) -> Optional[dict]:
             "price_aed": price, "beds": beds, "size_sqft": v["inputs"]["size_sqft"],
             "inputs": v["inputs"], "basis": v["basis"], "formula_version": v["formula_version"],
             "computed_at": now,
+            # When the verdict's stats came from PM, record when those stats were refreshed so the
+            # freshness gate can recompute as soon as a newer PM ingest lands; else stamp now.
+            "stats_as_of": stats_as_of or now,
         }
         stmt = pg_insert(ProjectAlphaVerdict).values(**vals)
         stmt = stmt.on_conflict_do_update(
@@ -350,7 +368,7 @@ async def get_or_compute_verdict(db, project_id: int, max_age_days: Optional[int
     session) when missing, stale, or from an older formula version."""
     from sqlalchemy import select
     from app.config import settings
-    from app.db.models import ProjectAlphaVerdict
+    from app.db.models import ProjectAlphaVerdict, PmCommunityStats
 
     if max_age_days is None:
         max_age_days = settings.alpha_verdict_max_age_days
@@ -363,6 +381,16 @@ async def get_or_compute_verdict(db, project_id: int, max_age_days: Optional[int
         and row.computed_at is not None
         and (datetime.now(timezone.utc) - row.computed_at) < timedelta(days=max_age_days)
     )
+    # Even within the age window, a verdict is stale if Property Monitor stats for its community were
+    # refreshed AFTER it was computed (a PM ingest landed without a backfill). Recompute so chat picks
+    # up the fresh numbers immediately instead of waiting out max_age_days.
+    if fresh and row.community_slug:
+        pm_updated = (await db.execute(
+            select(PmCommunityStats.updated_at).where(
+                PmCommunityStats.community_slug == row.community_slug)
+        )).scalar_one_or_none()
+        if pm_updated is not None and pm_updated > row.computed_at:
+            fresh = False
     if fresh:
         return _row_to_dict(row)
     return await recompute_verdict(project_id)
