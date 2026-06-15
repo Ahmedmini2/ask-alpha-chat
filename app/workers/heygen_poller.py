@@ -9,15 +9,25 @@ from app.config import settings
 from app.brochures import storage
 from app.db.models import Project, Video
 from app.db.session import AsyncSessionLocal
-from app.integrations import descript, heygen
-from app.videos import broll
+from app.integrations import fal, heygen
+from app.videos import broll, captions
 
 log = logging.getLogger("askalpha.heygen_poller")
 
 POLL_INTERVAL_SEC = 10
 
-# Descript caption jobs are heavy + slow (import → agent → publish); bound concurrency.
+# Caption (FAL transcribe + ffmpeg burn) concurrency. The ffmpeg burn itself is also bounded by
+# the b-roll semaphore inside captions.burn_hormozi; this caps how many caption jobs run at once.
 _caption_sem = asyncio.Semaphore(max(1, settings.descript_caption_concurrency))
+
+
+def _captions_on() -> bool:
+    return bool(settings.captions_enabled and settings.fal_key)
+
+
+def _postprocess_on() -> bool:
+    """Whether a finished HeyGen video needs our post-edit stage (b-roll and/or captions)."""
+    return bool(settings.broll_enabled or _captions_on())
 
 
 async def _notify_telegram(chat_id: int, text: str) -> None:
@@ -91,58 +101,68 @@ async def _maybe_broll(video_id: UUID, raw_url: str, project_id: Optional[int]) 
         return None
 
 
+async def _finalize(video_id: UUID, project_id: Optional[int], tg_chat_id: Optional[int], *,
+                    deliver_url: str, caption_status: str,
+                    caption_error: Optional[str] = None,
+                    captioned_video_url: Optional[str] = None) -> None:
+    """Mark the video completed, record the caption outcome, and send the single completion ping."""
+    async with AsyncSessionLocal() as db:
+        now = datetime.now(timezone.utc)
+        vals: dict = {"status": "completed", "caption_status": caption_status,
+                      "updated_at": now, "completed_at": now}
+        if caption_error is not None:
+            vals["caption_error"] = caption_error[:1000]
+        if captioned_video_url is not None:
+            vals["captioned_video_url"] = captioned_video_url
+        await db.execute(update(Video).where(Video.id == video_id).values(**vals))
+        await db.commit()
+        pname = await _project_name(db, project_id)
+    if tg_chat_id:
+        label = f" — {pname}" if pname else ""
+        suffix = " (with captions)" if caption_status == "done" else ""
+        note = "\n(captions weren't added this time)" if caption_status == "failed" else ""
+        await _notify_telegram(
+            int(tg_chat_id),
+            f"✅ Your video is ready{label}{suffix}{note}\nDownload / share:\n{deliver_url}",
+        )
+
+
 async def _broll_caption_and_finalize(
     video_id: UUID, raw_url: str, project_id: Optional[int], tg_chat_id: Optional[int]
 ) -> None:
     """Post-process a finished HeyGen video: (1) cut in property b-roll (best-effort), then
-    (2) caption the result via Descript, mark it complete, and send ONE notification. Every
-    step falls back to the raw HeyGen video so the agent always gets something. Fire-and-forget;
-    the outer try keeps a crash from surfacing as an unretrieved-task warning."""
+    (2) burn Hormozi captions — FAL whisper word timings + ffmpeg/libass. Both steps are
+    best-effort: any failure falls back to delivering the uncaptioned (b-roll or raw) video, so
+    the job never fails. Sends exactly ONE completion notification. Fire-and-forget."""
     try:
-        # Phase 1 — b-roll. Runs OUTSIDE the caption semaphore (it has its own concurrency
-        # guard), so b-roll on one video overlaps captioning of another.
+        # Phase 1 — b-roll. Its own concurrency guard, outside the caption semaphore.
         broll_url = await _maybe_broll(video_id, raw_url, project_id)
-        source_url = broll_url or raw_url          # what Descript captions
-        fallback_url = broll_url or raw_url        # delivered if captioning fails
+        source_url = broll_url or raw_url          # video we caption (composite if b-roll ran)
+        deliver_url = broll_url or raw_url          # delivered if captions are off / fail
 
-        # Phase 2 — captions.
+        if not _captions_on():
+            await _finalize(video_id, project_id, tg_chat_id,
+                            deliver_url=deliver_url, caption_status="skipped")
+            return
+
+        # Phase 2 — captions. Word timings come from the RAW audio (identical timeline to the
+        # composite), then we burn them onto source_url.
         async with _caption_sem:
             try:
-                captioned_url = await descript.caption_video(source_url)
-            except Exception as e:
-                log.warning("descript captioning failed for %s; delivering uncaptioned: %s", video_id, e)
+                words = await fal.transcribe_words(raw_url)
+                mp4 = await captions.burn_hormozi(source_url, words)
                 async with AsyncSessionLocal() as db:
-                    now = datetime.now(timezone.utc)
-                    await db.execute(update(Video).where(Video.id == video_id).values(
-                        status="completed", caption_status="failed", caption_error=str(e)[:1000],
-                        updated_at=now, completed_at=now,
-                    ))
-                    await db.commit()
                     pname = await _project_name(db, project_id)
-                if tg_chat_id:
-                    label = f" — {pname}" if pname else ""
-                    await _notify_telegram(
-                        int(tg_chat_id),
-                        f"✅ Your video is ready{label}\n(captions weren't added this time)\n"
-                        f"Download / share:\n{fallback_url}",
-                    )
+                _key, captioned_url = await storage.upload_mp4(
+                    mp4, pname or "promo", storage.ASSETS_BUCKET)
+            except Exception as e:
+                log.warning("captions failed for %s; delivering uncaptioned: %s", video_id, e)
+                await _finalize(video_id, project_id, tg_chat_id, deliver_url=deliver_url,
+                                caption_status="failed", caption_error=str(e))
                 return
-
-            async with AsyncSessionLocal() as db:
-                now = datetime.now(timezone.utc)
-                await db.execute(update(Video).where(Video.id == video_id).values(
-                    status="completed", caption_status="done",
-                    captioned_video_url=captioned_url, updated_at=now, completed_at=now,
-                ))
-                await db.commit()
-                pname = await _project_name(db, project_id)
-            log.info("video %s captioned via descript", video_id)
-            if tg_chat_id:
-                label = f" — {pname}" if pname else ""
-                await _notify_telegram(
-                    int(tg_chat_id),
-                    f"✅ Your video is ready{label} (with captions)\nDownload / share:\n{captioned_url}",
-                )
+            log.info("video %s captioned via fal+ffmpeg", video_id)
+            await _finalize(video_id, project_id, tg_chat_id, deliver_url=captioned_url,
+                            caption_status="done", captioned_video_url=captioned_url)
     except Exception as e:  # pragma: no cover — last-resort guard for the bg task
         log.exception("broll_caption_and_finalize crashed for %s: %s", video_id, e)
 
@@ -186,19 +206,19 @@ async def _poll_once() -> int:
                 if not video_url:
                     # Completed but the URL isn't populated yet — pick it up next cycle.
                     continue
-                if settings.descript_api_token:
-                    # Hand off to the Descript caption post-step. caption_status='processing'
-                    # takes the row out of the poll set (no double-spawn); status stays
-                    # 'processing' (the only valid statuses are pending/processing/completed/
-                    # failed). We store the raw video as a fallback and DON'T notify yet —
-                    # _caption_and_finalize sends the single completion message.
+                if _postprocess_on():
+                    # Hand off to the post-edit stage (b-roll + Hormozi captions).
+                    # caption_status='processing' takes the row out of the poll set (no
+                    # double-spawn); status stays 'processing' (the only valid statuses are
+                    # pending/processing/completed/failed). We store the raw video as a fallback
+                    # and DON'T notify yet — _broll_caption_and_finalize sends the single message.
                     await db.execute(update(Video).where(Video.id == v.id).values(
                         status="processing", caption_status="processing",
                         video_url=video_url, thumbnail_url=thumb, updated_at=now,
                     ))
                     touched += 1
                     to_caption.append((v.id, video_url, v.project_id, v.telegram_chat_id))
-                    log.info("video %s rendered, queuing Descript captions", v.id)
+                    log.info("video %s rendered, queuing post-edit (b-roll + captions)", v.id)
                 else:
                     await db.execute(update(Video).where(Video.id == v.id).values(
                         status="completed", video_url=video_url, thumbnail_url=thumb,
@@ -249,9 +269,10 @@ async def _poll_once() -> int:
 
 
 async def run_forever():
-    log.info("HeyGen poller started (interval=%ss); Descript captioning %s",
+    log.info("HeyGen poller started (interval=%ss); b-roll %s; Hormozi captions %s",
              POLL_INTERVAL_SEC,
-             "ENABLED" if settings.descript_api_token else "DISABLED — DESCRIPT_API_TOKEN not loaded")
+             "ON" if settings.broll_enabled else "OFF",
+             "ON" if _captions_on() else "OFF (set CAPTIONS_ENABLED + FAL_KEY)")
     while True:
         try:
             await _poll_once()

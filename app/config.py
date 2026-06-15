@@ -90,6 +90,17 @@ class Settings(BaseSettings):
     broll_preset: str = "veryfast"
     broll_zoom_max: float = 1.18
 
+    # Hormozi-style burned-in captions (FAL whisper for word timings + ffmpeg/libass). Replaces
+    # the Descript caption step. Best-effort — on any failure the video ships uncaptioned.
+    fal_key: str = ""
+    captions_enabled: bool = True
+    caption_words_per_line: int = 3
+    caption_active_color: str = "#FFD60A"     # the highlighted (spoken) word
+    caption_pop: bool = True                  # spring-ish scale pop on the active word
+    caption_font_name: str = "Anton"          # libass Fontname (must match the bundled font family)
+    caption_font_dir: str = "app/videos/assets/fonts"  # dir libass scans for the font
+    fal_whisper_timeout_sec: int = 240
+
     # Telegram bot
     telegram_bot_token: str = ""
 

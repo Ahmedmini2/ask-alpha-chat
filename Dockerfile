@@ -10,6 +10,7 @@ RUN apt-get update \
         ca-certificates \
         tini \
         ffmpeg \
+        fontconfig \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
