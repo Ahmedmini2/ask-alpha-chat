@@ -19,6 +19,7 @@ log = logging.getLogger("askalpha.brochures")
 _s3 = boto3.client("s3", region_name=settings.s3_assets_region)
 
 PDF_KEY_PREFIX = "generated/brochures"
+PNG_KEY_PREFIX = "generated/flyers"
 PRESIGN_TTL_SEC = 7 * 24 * 3600  # 7 days — the SigV4 maximum
 
 
@@ -52,6 +53,23 @@ async def upload_pdf(pdf_bytes: bytes, project_name: str, bucket: str) -> tuple[
             ContentType="application/pdf",
             ContentDisposition=f'attachment; filename="{slugify(project_name)}-mini-brochure.pdf"',
         )
+        return _s3.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": bucket, "Key": key},
+            ExpiresIn=PRESIGN_TTL_SEC,
+        )
+
+    url = await asyncio.to_thread(_put_and_sign)
+    return key, url
+
+
+async def upload_png(png_bytes: bytes, name: str, bucket: str) -> tuple[str, str]:
+    """Store a rendered flyer PNG; returns (s3_key, presigned_url). Served inline
+    (no attachment disposition) so the link previews as an image."""
+    key = f"{PNG_KEY_PREFIX}/{slugify(name)}-{uuid.uuid4().hex[:8]}.png"
+
+    def _put_and_sign() -> str:
+        _s3.put_object(Bucket=bucket, Key=key, Body=png_bytes, ContentType="image/png")
         return _s3.generate_presigned_url(
             "get_object",
             Params={"Bucket": bucket, "Key": key},

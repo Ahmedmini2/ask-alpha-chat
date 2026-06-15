@@ -115,3 +115,52 @@ async def render_brochure_pdf(context: dict, image_files: dict[str, bytes]) -> b
 async def render_comparison_pdf(context: dict, image_files: dict[str, bytes]) -> bytes:
     html = render_html("comparison.html.j2", context)
     return await html_to_pdf(html, image_files, landscape=False)
+
+
+async def html_to_png(
+    html: str,
+    image_files: dict[str, bytes],
+    selector: str,
+    scale: int = 2,
+) -> bytes:
+    """Write html + images to a temp dir, screenshot one element, return PNG bytes.
+
+    Screenshots the matched element (not the viewport) so the output height tracks
+    the content; ``scale`` is the device pixel ratio for a crisp, retina-grade image.
+    """
+    from playwright.async_api import async_playwright
+
+    async with _render_lock:
+        with tempfile.TemporaryDirectory(prefix="flyer-") as tmp:
+            tmp_path = Path(tmp)
+            for name, data in image_files.items():
+                (tmp_path / name).write_bytes(data)
+            index = tmp_path / "index.html"
+            index.write_text(html, encoding="utf-8")
+
+            env = None
+            local_libs = Path.home() / ".cache" / "chromium-local-libs"
+            if local_libs.is_dir():
+                prev = os.environ.get("LD_LIBRARY_PATH", "")
+                env = {**os.environ, "LD_LIBRARY_PATH": f"{local_libs}:{prev}" if prev else str(local_libs)}
+
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(env=env, args=[
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--force-color-profile=srgb",
+                ])
+                try:
+                    page = await browser.new_page(device_scale_factor=scale)
+                    await page.goto(index.as_uri(), wait_until="networkidle",
+                                    timeout=RENDER_TIMEOUT_MS)
+                    await page.wait_for_timeout(400)  # settle fonts/last paints
+                    png = await page.locator(selector).screenshot(type="png")
+                finally:
+                    await browser.close()
+    return png
+
+
+async def render_flyer_png(context: dict, image_files: dict[str, bytes]) -> bytes:
+    html = render_html("flyer.html.j2", context)
+    return await html_to_png(html, image_files, selector="#flyer")

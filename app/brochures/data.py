@@ -397,6 +397,165 @@ class _PhotoPool:
 
 
 # --------------------------------------------------------------------------
+# investment numbers — the "Numbers at a Glance" rows + key-fact scalars.
+# Single source of truth shared by the mini-brochure AND the WhatsApp flyer so
+# both surfaces always quote identical figures.
+# --------------------------------------------------------------------------
+
+async def compute_financials(
+    db: AsyncSession,
+    project: Project,
+    unit_groups: list[dict],
+    *,
+    district: str,
+    city: str,
+    handover: Optional[str],
+    overrides: Optional[dict] = None,
+) -> dict:
+    """Compute the investment summary figures for one project. Returns a dict with
+    the assembled 12-row ``numbers`` list (cover/flyer ready) plus the raw scalars
+    (entry_price, price_sqft, net_yield, …) callers may want for other layouts.
+    Agent-stated overrides win; anything we can't compute renders as '—'. Never
+    raises on missing data."""
+    ov = overrides or {}
+
+    # Entry price = the cheapest available figure across the unit groups AND the
+    # project's own min_price (covers units with NULL bedrooms that never grouped).
+    entry_price = _f(ov.get("entry_price_aed"))
+    cheapest_group = min((g for g in unit_groups if g["price_from"]),
+                         key=lambda g: g["price_from"], default=None)
+    if not entry_price:
+        candidates = [g["price_from"] for g in unit_groups if g["price_from"]]
+        mp = _f(project.min_price)
+        if mp and mp > 0:
+            candidates.append(mp)
+        entry_price = min(candidates) if candidates else None
+
+    # Price/sqft must pair a price and a size that describe the SAME unit. Prefer
+    # the cheapest group's own size; fall back to project min_size only when the
+    # entry price also came from the project row (not an override or a group).
+    min_size_sqft = _size_to_sqft(project.min_size, project.area_unit)
+    price_sqft = _f(ov.get("price_per_sqft_aed"))
+    if not price_sqft:
+        if cheapest_group and cheapest_group["price_from"] and cheapest_group["size_from"] \
+                and entry_price == cheapest_group["price_from"]:
+            price_sqft = cheapest_group["price_from"] / cheapest_group["size_from"]
+        else:
+            mp = _f(project.min_price)
+            if min_size_sqft and mp and mp > 0 and entry_price == mp:
+                price_sqft = mp / min_size_sqft
+
+    cheaper_pct = _f(ov.get("cheaper_than_area_pct"))
+    if cheaper_pct is None and price_sqft:
+        med = await _district_median_price_sqft(db, project)
+        if med:
+            cheaper_pct = (price_sqft - med) / med * 100.0
+
+    # Area-model investment estimates (net yield, area rent return, appreciation,
+    # Y5 value, time-to-sell). Real area data feeds the formulas where we have it;
+    # the per-community table is the fallback. Agent-stated overrides still win.
+    m = None
+    if entry_price:
+        from_entry_group = bool(
+            cheapest_group and cheapest_group["price_from"]
+            and entry_price == cheapest_group["price_from"]
+        )
+        area_inputs = await metrics.gather_area_inputs(project)
+        m = metrics.compute_metrics(
+            entry_price,
+            beds=cheapest_group["bedrooms"] if from_entry_group else None,
+            sqft=cheapest_group["size_from"] if from_entry_group else None,
+            community=district or city,
+            area_yield=area_inputs["area_yield"],
+            area_appreciation=area_inputs["area_appreciation"],
+            activity_label=area_inputs["activity_label"],
+        )
+
+    def _metric(ov_key: str, m_key: str) -> Optional[float]:
+        v = _f(ov.get(ov_key))
+        if v is None and m is not None:
+            v = _f(m.get(m_key))
+        return v
+
+    net_yield = _metric("net_yield_pct", "net_yield_pct")
+    area_rent = _metric("area_avg_rent_pct", "area_avg_rent_return_pct")
+    appreciation = _metric("annual_appreciation_pct", "annual_appreciation_pct")
+    y5_value = _f(ov.get("y5_projected_value_aed"))
+    if y5_value is None and appreciation is not None and entry_price:
+        y5_value = entry_price * (1 + appreciation / 100.0) ** 5
+    dom = _f(ov.get("days_on_market"))  # per-listing DOM — override-only, we don't store it
+    tts = _metric("time_to_sell_days", "time_to_sell_days")
+
+    service_charge = clean_text(ov.get("service_charge") or project.service_charge or "")
+    sc_value, sc_unit = None, None
+    if service_charge:
+        sc_match = re.search(r"(\d+(?:\.\d+)?)(?:\s*[-–]\s*(\d+(?:\.\d+)?))?", service_charge)
+        if sc_match:
+            sc_value = sc_match.group(1) + (f"–{sc_match.group(2)}" if sc_match.group(2) else "")
+            sc_unit = "AED"
+
+    # Golden Visa: "Yes" only if EVERY unit clears AED 2M; if just the upper end of
+    # the range qualifies, say so; "No" only when the whole range is below.
+    top_price = max((p for p in (_f(project.max_price), entry_price) if p), default=None)
+    if entry_price and entry_price >= GOLDEN_VISA_AED:
+        golden = "Yes (≥ AED 2M)"
+    elif top_price and top_price >= GOLDEN_VISA_AED:
+        golden = "Select units"
+    elif entry_price and _f(project.max_price):
+        golden = "No"
+    else:
+        golden = None
+
+    def row(k: str, v: Optional[str], unit: Optional[str] = None, style: Optional[str] = None) -> dict:
+        if v is None:
+            return {"k": k, "v": "—", "unit": None, "style": "dim"}
+        return {"k": k, "v": v, "unit": unit, "style": style}
+
+    # The cover field is labelled "Cheaper than Area Average": a project priced
+    # BELOW the district median (cheaper_pct < 0) is the on-message case and prints
+    # the discount. When it's actually a premium, relabel so the sign never lies.
+    if cheaper_pct is None:
+        cheaper_label, cheaper_val = "Cheaper than Area Average", None
+    elif cheaper_pct <= 0:
+        cheaper_label, cheaper_val = "Cheaper than Area Average", fmt_pct(cheaper_pct, signed=True)
+    else:
+        cheaper_label, cheaper_val = "Premium to Area Average", fmt_pct(cheaper_pct, signed=True)
+
+    entry_compact = fmt_aed_compact(entry_price)
+    numbers = [
+        row("Entry Price", entry_compact.replace("AED ", "") if entry_compact else None, "AED"),
+        row("Price / sqft", fmt_int(price_sqft), "AED"),
+        row(cheaper_label, cheaper_val),
+        row("Net Yield", fmt_pct(net_yield), style="warn"),
+        row("Area Average Rent Return", fmt_pct(area_rent)),
+        row("Annual Appreciation", fmt_pct(appreciation, signed=True) if appreciation is not None else None),
+        row("Y5 Projected Value", (fmt_aed_compact(y5_value) or "").replace("AED ", "") or None, "AED" if y5_value else None),
+        row("Service Charge / sqft", sc_value, sc_unit),
+        row("Golden Visa Eligible", golden),
+        row("Days on Market", fmt_int(dom)),
+        row("Time to Sell in Area", f"{fmt_int(tts)} days" if tts else None),
+        row("Anticipated Handover", handover),
+    ]
+
+    return {
+        "numbers": numbers,
+        "entry_price": entry_price,
+        "entry_compact": entry_compact,
+        "min_size_sqft": min_size_sqft,
+        "price_sqft": price_sqft,
+        "cheaper_pct": cheaper_pct,
+        "net_yield_pct": net_yield,
+        "area_avg_rent_pct": area_rent,
+        "annual_appreciation_pct": appreciation,
+        "y5_value": y5_value,
+        "days_on_market": dom,
+        "time_to_sell_days": tts,
+        "service_charge_value": sc_value,
+        "golden_visa": golden,
+    }
+
+
+# --------------------------------------------------------------------------
 # main entry
 # --------------------------------------------------------------------------
 
@@ -567,123 +726,14 @@ async def build_context(
     features = features[:5]
 
     # ---- investment numbers (computed + overrides; '—' otherwise) ----
-    # Entry price = the cheapest available figure across the unit groups AND the
-    # project's own min_price (covers units with NULL bedrooms that never grouped).
-    entry_price = _f(ov.get("entry_price_aed"))
-    cheapest_group = min((g for g in unit_groups if g["price_from"]),
-                         key=lambda g: g["price_from"], default=None)
-    if not entry_price:
-        candidates = [g["price_from"] for g in unit_groups if g["price_from"]]
-        mp = _f(project.min_price)
-        if mp and mp > 0:
-            candidates.append(mp)
-        entry_price = min(candidates) if candidates else None
-
-    # Price/sqft must pair a price and a size that describe the SAME unit. Prefer
-    # the cheapest group's own size; fall back to project min_size only when the
-    # entry price also came from the project row (not an override or a group).
-    min_size_sqft = _size_to_sqft(project.min_size, project.area_unit)
-    price_sqft = _f(ov.get("price_per_sqft_aed"))
-    if not price_sqft:
-        if cheapest_group and cheapest_group["price_from"] and cheapest_group["size_from"] \
-                and entry_price == cheapest_group["price_from"]:
-            price_sqft = cheapest_group["price_from"] / cheapest_group["size_from"]
-        else:
-            mp = _f(project.min_price)
-            if min_size_sqft and mp and mp > 0 and entry_price == mp:
-                price_sqft = mp / min_size_sqft
-
-    cheaper_pct = _f(ov.get("cheaper_than_area_pct"))
-    if cheaper_pct is None and price_sqft:
-        med = await _district_median_price_sqft(db, project)
-        if med:
-            cheaper_pct = (price_sqft - med) / med * 100.0
-
-    # Area-model investment estimates (net yield, area rent return, appreciation,
-    # Y5 value, time-to-sell). Real area data feeds the formulas where we have it;
-    # the per-community table is the fallback. Agent-stated overrides still win.
-    m = None
-    if entry_price:
-        from_entry_group = bool(
-            cheapest_group and cheapest_group["price_from"]
-            and entry_price == cheapest_group["price_from"]
-        )
-        area_inputs = await metrics.gather_area_inputs(project)
-        m = metrics.compute_metrics(
-            entry_price,
-            beds=cheapest_group["bedrooms"] if from_entry_group else None,
-            sqft=cheapest_group["size_from"] if from_entry_group else None,
-            community=district or city,
-            area_yield=area_inputs["area_yield"],
-            area_appreciation=area_inputs["area_appreciation"],
-            activity_label=area_inputs["activity_label"],
-        )
-
-    def _metric(ov_key: str, m_key: str) -> Optional[float]:
-        v = _f(ov.get(ov_key))
-        if v is None and m is not None:
-            v = _f(m.get(m_key))
-        return v
-
-    net_yield = _metric("net_yield_pct", "net_yield_pct")
-    area_rent = _metric("area_avg_rent_pct", "area_avg_rent_return_pct")
-    appreciation = _metric("annual_appreciation_pct", "annual_appreciation_pct")
-    y5_value = _f(ov.get("y5_projected_value_aed"))
-    if y5_value is None and appreciation is not None and entry_price:
-        y5_value = entry_price * (1 + appreciation / 100.0) ** 5
-    dom = _f(ov.get("days_on_market"))  # per-listing DOM — override-only, we don't store it
-    tts = _metric("time_to_sell_days", "time_to_sell_days")
-
-    service_charge = clean_text(ov.get("service_charge") or project.service_charge or "")
-    sc_value, sc_unit = None, None
-    if service_charge:
-        m = re.search(r"(\d+(?:\.\d+)?)(?:\s*[-–]\s*(\d+(?:\.\d+)?))?", service_charge)
-        if m:
-            sc_value = m.group(1) + (f"–{m.group(2)}" if m.group(2) else "")
-            sc_unit = "AED"
-
-    # Golden Visa: "Yes" only if EVERY unit clears AED 2M; if just the upper end of
-    # the range qualifies, say so; "No" only when the whole range is below.
-    top_price = max((p for p in (_f(project.max_price), entry_price) if p), default=None)
-    if entry_price and entry_price >= GOLDEN_VISA_AED:
-        golden = "Yes (≥ AED 2M)"
-    elif top_price and top_price >= GOLDEN_VISA_AED:
-        golden = "Select units"
-    elif entry_price and _f(project.max_price):
-        golden = "No"
-    else:
-        golden = None
-
-    def row(k: str, v: Optional[str], unit: Optional[str] = None, style: Optional[str] = None) -> dict:
-        if v is None:
-            return {"k": k, "v": "—", "unit": None, "style": "dim"}
-        return {"k": k, "v": v, "unit": unit, "style": style}
-
-    # The cover field is labelled "Cheaper than Area Average": a project priced
-    # BELOW the district median (cheaper_pct < 0) is the on-message case and prints
-    # the discount. When it's actually a premium, relabel so the sign never lies.
-    if cheaper_pct is None:
-        cheaper_label, cheaper_val = "Cheaper than Area Average", None
-    elif cheaper_pct <= 0:
-        cheaper_label, cheaper_val = "Cheaper than Area Average", fmt_pct(cheaper_pct, signed=True)
-    else:
-        cheaper_label, cheaper_val = "Premium to Area Average", fmt_pct(cheaper_pct, signed=True)
-
-    entry_compact = fmt_aed_compact(entry_price)
-    numbers = [
-        row("Entry Price", entry_compact.replace("AED ", "") if entry_compact else None, "AED"),
-        row("Price / sqft", fmt_int(price_sqft), "AED"),
-        row(cheaper_label, cheaper_val),
-        row("Net Yield", fmt_pct(net_yield), style="warn"),
-        row("Area Average Rent Return", fmt_pct(area_rent)),
-        row("Annual Appreciation", fmt_pct(appreciation, signed=True) if appreciation is not None else None),
-        row("Y5 Projected Value", (fmt_aed_compact(y5_value) or "").replace("AED ", "") or None, "AED" if y5_value else None),
-        row("Service Charge / sqft", sc_value, sc_unit),
-        row("Golden Visa Eligible", golden),
-        row("Days on Market", fmt_int(dom)),
-        row("Time to Sell in Area", f"{fmt_int(tts)} days" if tts else None),
-        row("Anticipated Handover", handover),
-    ]
+    fin = await compute_financials(
+        db, project, unit_groups,
+        district=district, city=city, handover=handover, overrides=ov,
+    )
+    entry_price = fin["entry_price"]
+    entry_compact = fin["entry_compact"]
+    min_size_sqft = fin["min_size_sqft"]
+    numbers = fin["numbers"]
 
     # ---- location ----
     lat, lng = _f(project.lat), _f(project.lng)

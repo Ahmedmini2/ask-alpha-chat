@@ -24,6 +24,7 @@ import app.tools.documents   # noqa: F401
 import app.tools.videos      # noqa: F401
 import app.tools.brochures   # noqa: F401
 import app.tools.comparison  # noqa: F401
+import app.tools.flyers      # noqa: F401
 
 log = logging.getLogger("askalpha.orchestrator")
 
@@ -261,6 +262,18 @@ states an appreciation figure — when they do ("assume 7% appreciation", "X yie
 that project's per-property fields. NEVER invent yields, appreciation, or scores.
     * For a quick in-chat numeric comparison without a document (or for non-agents), use \
 compare_projects instead, which returns the figures as data to summarise in your reply.
+- WHATSAPP FLYER / SHAREABLE IMAGE: when an agent asks for a "WhatsApp flyer", "flyer", \
+"social image/post", or "an image/PNG of the key facts" or "of the investment insights" for a \
+project, use generate_whatsapp_flyer (agents only — anonymous users must sign in). It produces \
+one branded portrait PNG. There are two variants via flyer_type: 'key_facts' (starting price, \
+payment plan, handover, location) and 'investment' (the Numbers at a Glance investment summary). \
+Pick the one they named — "investment insights"/"numbers"/"yields" → 'investment'; "key facts" or \
+a bare "flyer"/"image" → 'key_facts'. Resolve the project first (search_projects) and pass \
+project_id. The call is synchronous (~20–40s); after it returns, share image_url so it can be \
+downloaded, and on Telegram say the image has been sent (sent_to_telegram). Investment metrics are \
+auto-filled from our area model; when the agent states their own numbers ("use 6% yield"), pass \
+them as the matching override arguments. NEVER invent override values. If the agent doesn't say \
+which variant they want, make the 'key_facts' one and mention you can also do the investment-insights image.
 """
 
 MAX_TOOL_ITERATIONS = 10  # higher than 5 to accommodate bulk video requests
@@ -388,6 +401,10 @@ def _summarize_tool_result(name: str, result: dict) -> str:
     if name == "generate_comparison_pdf":
         return (f"projects={result.get('project_ids')} status={result.get('status')} "
                 f"telegram={result.get('sent_to_telegram')} url?={bool(result.get('pdf_url'))}")
+    if name == "generate_whatsapp_flyer":
+        return (f"project={result.get('project_id')} type={result.get('flyer_type')} "
+                f"status={result.get('status')} telegram={result.get('sent_to_telegram')} "
+                f"url?={bool(result.get('image_url'))}")
     return repr(result)[:120]
 
 
@@ -506,6 +523,18 @@ def _build_cards(tool_calls: list[dict]) -> list[dict]:
                 "project_names": result.get("project_names"),
                 "alpha_scores": result.get("alpha_scores"),
                 "pdf_url": result.get("pdf_url"),
+                "filename": result.get("filename"),
+                "sent_to_telegram": result.get("sent_to_telegram"),
+            })
+        elif name == "generate_whatsapp_flyer":
+            cards.append({
+                "type": "flyer",
+                "status": result.get("status"),
+                "project_id": result.get("project_id"),
+                "project_name": result.get("project_name"),
+                "flyer_type": result.get("flyer_type"),
+                "flyer_label": result.get("flyer_label"),
+                "image_url": result.get("image_url"),
                 "filename": result.get("filename"),
                 "sent_to_telegram": result.get("sent_to_telegram"),
             })

@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<!-- Allegiance single-image flyer (WhatsApp / social). Portrait. Two variants:
+     'investment' (Numbers at a Glance) and 'key_facts'. Reuses the mini-brochure
+     design system. Rendered headless to PNG by screenshotting #flyer. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{ project.name }} — Flyer | Allegiance Real Estate</title>
+<style>
+:root{
+  --pine:#06342C;
+  --gold:#C1A777;
+  --gold-deep:#8F7748;
+  --ink:#16191D;
+  --slate:#5A646E;
+  --slate-soft:#98A1AA;
+  --hairline:#E5E1D8;
+  --hairline-soft:#EFECE4;
+  --paper:#FFFFFF;
+  --paper-warm:#FAF7F0;
+  --accent:{{ accent | default('#C2622C') }};
+  --serif-display:"Vanitas","Marcellus",Georgia,serif;
+  --serif-alt:"Playfair Display",Georgia,serif;
+  --sans:"Google Sans Flex",system-ui,Arial,sans-serif;
+}
+{% if vanitas_font %}
+@font-face{ font-family:"Vanitas"; src:url("{{ static_dir }}/fonts/{{ vanitas_font }}"); font-weight:400; font-display:block; }
+{% endif %}
+@font-face{ font-family:"Marcellus"; src:url("{{ static_dir }}/fonts/Marcellus-Regular.ttf"); font-weight:400; font-display:block; }
+@font-face{ font-family:"Google Sans Flex"; src:url("{{ static_dir }}/fonts/GoogleSansFlex-Regular.ttf"); font-weight:400; font-display:block; }
+@font-face{ font-family:"Google Sans Flex"; src:url("{{ static_dir }}/fonts/GoogleSansFlex-Medium.ttf"); font-weight:500; font-display:block; }
+@font-face{ font-family:"Google Sans Flex"; src:url("{{ static_dir }}/fonts/GoogleSansFlex-SemiBold.ttf"); font-weight:600; font-display:block; }
+@font-face{ font-family:"Google Sans Flex"; src:url("{{ static_dir }}/fonts/GoogleSansFlex-Bold.ttf"); font-weight:700; font-display:block; }
+@font-face{ font-family:"Playfair Display"; src:url("{{ static_dir }}/fonts/PlayfairDisplay-Italic.ttf"); font-weight:400; font-style:italic; font-display:block; }
+
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;background:#fff;}
+body{font-family:var(--sans);-webkit-font-smoothing:antialiased;}
+
+#flyer{
+  width:1080px; min-height:1528px; background:var(--paper);
+  position:relative; overflow:hidden; display:flex; flex-direction:column;
+}
+
+/* ---- hero ---- */
+.hero{ position:relative; height:602px; overflow:hidden; flex:none; background:#0c2e27; }
+.hero > img{ width:100%; height:100%; object-fit:cover; display:block; }
+.hero::after{ content:""; position:absolute; inset:0;
+  background:linear-gradient(0deg, rgba(6,52,44,.74) 0%, rgba(6,52,44,.04) 52%),
+             linear-gradient(105deg, rgba(6,52,44,.34) 0%, rgba(6,52,44,0) 46%); }
+.hero__title{ position:absolute; left:64px; right:60px; bottom:64px; z-index:2; color:#fff; }
+.hero__title .k{ font-family:var(--sans); font-weight:600; font-size:15px; letter-spacing:.32em; text-transform:uppercase; color:rgba(255,255,255,.9); margin-bottom:20px; }
+.hero__title .nm{ font-family:var(--serif-display); font-weight:400; font-size:84px; line-height:.98; letter-spacing:.03em; text-transform:uppercase; text-shadow:0 3px 18px rgba(6,28,22,.45); margin:0; }
+.hero__title .nm .by{ display:block; font-family:var(--serif-alt); font-style:italic; font-size:30px; text-transform:none; letter-spacing:.02em; color:var(--gold); margin-top:14px; }
+
+/* ---- azulejo tile band ---- */
+.tiles{ height:26px; flex:none; line-height:0; }
+.tiles svg{ display:block; width:100%; height:100%; }
+
+/* ---- body ---- */
+.body{ flex:1; min-height:0; display:flex; flex-direction:column; padding:60px 64px 30px; }
+.eyebrow{ font-family:var(--sans); font-weight:600; font-size:15px; letter-spacing:.34em; text-transform:uppercase; color:var(--accent); }
+
+/* investment head */
+.ihead{ margin-bottom:34px; }
+.ihead .e{ display:block; margin-bottom:14px; }
+.ihead .h{ font-family:var(--serif-display); font-weight:400; font-size:54px; letter-spacing:.01em; color:var(--pine); line-height:1; }
+
+/* investment numbers grid */
+.nums{ display:grid; grid-template-columns:1fr 1fr; column-gap:64px; }
+.numrow{ display:flex; align-items:baseline; justify-content:space-between; gap:18px; padding:21px 2px; border-bottom:1px solid var(--hairline); }
+.numrow .k{ font-family:var(--sans); font-weight:500; font-size:19px; letter-spacing:.01em; color:var(--slate); line-height:1.2; }
+.numrow .v{ font-family:var(--sans); font-weight:700; font-size:24px; color:var(--pine); line-height:1; letter-spacing:-.01em; white-space:nowrap; }
+.numrow .v .u{ font-weight:600; font-size:16px; color:var(--slate-soft); margin-right:2px; }
+.numrow .v.warn{ color:var(--gold-deep); }
+.numrow .v.dim{ color:var(--slate-soft); font-weight:500; }
+
+/* key facts */
+.kfhead{ text-align:center; margin-bottom:54px; }
+.kfgrid{ flex:1; display:grid; grid-template-columns:1fr 1fr; grid-template-rows:1fr 1fr;
+  border-top:1px solid var(--hairline); border-left:1px solid var(--hairline); }
+.kfcell{ border-right:1px solid var(--hairline); border-bottom:1px solid var(--hairline);
+  padding:52px 48px; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; }
+.kfcell .lbl{ font-family:var(--sans); font-weight:600; font-size:14px; letter-spacing:.28em; text-transform:uppercase; color:var(--slate-soft); margin-bottom:22px; }
+.kfcell .big{ font-family:var(--serif-display); font-weight:400; font-size:62px; line-height:1.02; letter-spacing:.01em; color:var(--pine); }
+.kfcell .big .u{ font-family:var(--sans); font-weight:600; font-size:26px; color:var(--slate); margin-right:8px; vertical-align:middle; }
+.kfcell .sub{ font-family:var(--sans); font-weight:500; font-size:18px; color:var(--slate); margin-top:20px; line-height:1.35; }
+
+/* ---- footer ---- */
+.foot{ flex:none; padding:30px 0 46px; display:flex; flex-direction:column; align-items:center; gap:13px; border-top:1px solid var(--hairline-soft); margin:0 64px; }
+.foot img{ height:62px; width:auto; display:block; }
+.foot .cities{ font-family:var(--sans); font-weight:500; font-size:13px; letter-spacing:.24em; text-transform:uppercase; color:var(--slate-soft); white-space:nowrap; }
+</style>
+</head>
+<body>
+{% set cities_line = "Dubai · Sydney · Riyadh · Paris · Beirut · Tokyo · Ljubljana" %}
+<div id="flyer">
+
+  <!-- hero -->
+  <div class="hero">
+    {% if cover.image %}<img src="{{ cover.image }}" alt="{{ project.name }}">{% endif %}
+    <div class="hero__title">
+      {% if cover.kicker %}<div class="k">{{ cover.kicker }}</div>{% endif %}
+      <h1 class="nm">{{ project.name }}{% if project.developer %}<span class="by">by {{ project.developer }}</span>{% endif %}</h1>
+    </div>
+  </div>
+
+  <!-- azulejo tile band (pattern tiles every 26px across the full width) -->
+  <div class="tiles">
+    <svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="0 0 1040 26" preserveAspectRatio="none">
+      <defs>
+        <pattern id="azu" width="26" height="26" patternUnits="userSpaceOnUse">
+          <rect width="26" height="26" fill="#2c5aa0"/>
+          <g fill="none" stroke="#eaf0fb" stroke-width="1.4">
+            <circle cx="0" cy="13" r="9"/><circle cx="26" cy="13" r="9"/>
+            <circle cx="13" cy="0" r="9"/><circle cx="13" cy="26" r="9"/>
+            <circle cx="13" cy="13" r="9"/>
+          </g>
+          <g fill="#eaf0fb">
+            <circle cx="13" cy="13" r="2"/>
+            <circle cx="0" cy="13" r="1.4"/><circle cx="26" cy="13" r="1.4"/>
+            <circle cx="13" cy="0" r="1.4"/><circle cx="13" cy="26" r="1.4"/>
+          </g>
+        </pattern>
+      </defs>
+      <rect width="1040" height="26" fill="url(#azu)"/>
+    </svg>
+  </div>
+
+  <!-- body -->
+  <div class="body">
+    {% if flyer_type == 'investment' %}
+      <div class="ihead">
+        <span class="eyebrow e">Investment Summary</span>
+        <div class="h">Numbers at a Glance</div>
+      </div>
+      <div class="nums">
+        {% for row in numbers %}
+        <div class="numrow">
+          <span class="k">{{ row.k }}</span>
+          <span class="v{% if row.style %} {{ row.style }}{% endif %}">{% if row.unit %}<span class="u">{{ row.unit }}</span>{% endif %}{{ row.v }}</span>
+        </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="kfhead"><span class="eyebrow">Key Facts</span></div>
+      <div class="kfgrid">
+        {% for f in key_facts %}
+        <div class="kfcell">
+          <div class="lbl">{{ f.label }}</div>
+          <div class="big">{% if f.unit %}<span class="u">{{ f.unit }}</span>{% endif %}{{ f.value }}</div>
+          {% if f.sub %}<div class="sub">{{ f.sub }}</div>{% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+  </div>
+
+  <!-- footer -->
+  <div class="foot">
+    <img src="{{ static_dir }}/allegiance-green.png" alt="Allegiance Real Estate">
+    <div class="cities">{{ cities_line }}</div>
+  </div>
+
+</div>
+</body>
+</html>
