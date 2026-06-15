@@ -14,6 +14,7 @@ Run (needs the caller IP allowlisted by Property Monitor):
 import asyncio
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -100,31 +101,44 @@ async def _communities() -> list[tuple[str, str]]:
     return sorted(seen.items())
 
 
+def _search_terms(district: str) -> list[str]:
+    """Candidate PM queries from a project's district string, best first. The real community name is
+    often inside a parenthetical ('JVC (Jumeirah Village Circle)' -> 'Jumeirah Village Circle'),
+    which is what PM matches; then the de-parenthesized base; then the raw string."""
+    terms: list[str] = []
+    m = re.search(r"\((.*?)\)", district or "")
+    if m and m.group(1).strip():
+        terms.append(m.group(1).strip())
+    base = re.sub(r"\(.*?\)", "", district or "").strip()
+    if base:
+        terms.append(base)
+    if (district or "").strip():
+        terms.append(district.strip())
+    out: list[str] = []
+    for t in terms:
+        if t and t not in out:
+            out.append(t)
+    return out
+
+
 def _pick_location(candidates: list[dict], community_name: str) -> Optional[dict]:
-    """Pick an AVM-CAPABLE building/tower (avm_status=1, level 3) in the community — the
-    community-level entry itself can't run an AVM (PM 500s). Prefer apartments whose
-    master_development matches; fall back progressively."""
+    """Pick an AVM-CAPABLE location (avm_status=1) in the community. Prefer a level-3 building (the
+    community-level entry can 500 on AVM) and an apartment whose master_development matches; fall
+    back to any AVM-capable result."""
     if not candidates:
         return None
     cl = community_name.lower()
-
-    def avm_ok(c):
-        return c.get("avm_status") in (1, "1")
-
-    def is_building(c):
-        return str(c.get("level")) == "3" and (c.get("name") or "").lower() != cl
-
-    buildings = [c for c in candidates if avm_ok(c) and is_building(c)]
-    apts = [c for c in buildings if (c.get("location_unit_type") or "").lower() == "apartment"]
-    pool = apts or buildings
+    avm = [c for c in candidates if c.get("avm_status") in (1, "1")]
+    if not avm:
+        return None
+    l3 = [c for c in avm if str(c.get("level")) == "3"]
+    pool = l3 or avm
+    apts = [c for c in pool if (c.get("location_unit_type") or "").lower() == "apartment"]
+    pool = apts or pool
     for c in pool:
         if (c.get("master_development") or "").lower() == cl:
             return c
-    if pool:
-        return pool[0]
-    # last resort: any avm-capable candidate
-    any_avm = [c for c in candidates if avm_ok(c)]
-    return any_avm[0] if any_avm else None
+    return pool[0]
 
 
 async def _upsert_raw(table: str, slug: str, report_hash: str, raw: Any) -> None:
@@ -140,8 +154,12 @@ async def _upsert_raw(table: str, slug: str, report_hash: str, raw: Any) -> None
 
 
 async def _ingest_one_community(slug: str, district: str) -> str:
-    locs = _unwrap(await pm.search_locations(district, emirate_id=settings.pm_emirate_id)) or []
-    loc = _pick_location(locs, district)
+    loc = None
+    for q in _search_terms(district):
+        locs = _unwrap(await pm.search_locations(q, emirate_id=settings.pm_emirate_id)) or []
+        loc = _pick_location(locs, q)
+        if loc:
+            break
     if not loc:
         return "no-location"
     location_id = loc.get("location_id") or loc.get("id")
