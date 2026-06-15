@@ -10,7 +10,7 @@ from app.brochures import storage
 from app.db.models import Project, Video
 from app.db.session import AsyncSessionLocal
 from app.integrations import fal, heygen
-from app.videos import broll, captions
+from app.videos import align, broll, captions
 
 log = logging.getLogger("askalpha.heygen_poller")
 
@@ -128,7 +128,8 @@ async def _finalize(video_id: UUID, project_id: Optional[int], tg_chat_id: Optio
 
 
 async def _broll_caption_and_finalize(
-    video_id: UUID, raw_url: str, project_id: Optional[int], tg_chat_id: Optional[int]
+    video_id: UUID, raw_url: str, project_id: Optional[int], tg_chat_id: Optional[int],
+    script: Optional[str] = None,
 ) -> None:
     """Post-process a finished HeyGen video: (1) cut in property b-roll (best-effort), then
     (2) burn Hormozi captions — FAL whisper word timings + ffmpeg/libass. Both steps are
@@ -150,6 +151,14 @@ async def _broll_caption_and_finalize(
         async with _caption_sem:
             try:
                 words = await fal.transcribe_words(raw_url)
+                # Caption TEXT comes from the ground-truth script (correct brand spellings like
+                # "Damac"); whisper supplies only the per-word TIMING. Falls back to whisper's own
+                # transcription if alignment can't confidently map the two.
+                if script:
+                    try:
+                        words = align.align_script_to_words(script, words) or words
+                    except Exception as ae:  # never let alignment fail the caption job
+                        log.warning("caption align failed for %s; using whisper text: %s", video_id, ae)
                 mp4 = await captions.burn_hormozi(source_url, words)
                 async with AsyncSessionLocal() as db:
                     pname = await _project_name(db, project_id)
@@ -186,7 +195,7 @@ async def _poll_once() -> int:
 
         touched = 0
         notifications: list[tuple[int, str]] = []  # (chat_id, text)
-        to_caption: list[tuple] = []  # (video_id, raw_url, project_id, tg_chat_id)
+        to_caption: list[tuple] = []  # (video_id, raw_url, project_id, tg_chat_id, script)
 
         for v in rows:
             if not v.heygen_video_id:
@@ -217,7 +226,7 @@ async def _poll_once() -> int:
                         video_url=video_url, thumbnail_url=thumb, updated_at=now,
                     ))
                     touched += 1
-                    to_caption.append((v.id, video_url, v.project_id, v.telegram_chat_id))
+                    to_caption.append((v.id, video_url, v.project_id, v.telegram_chat_id, v.script))
                     log.info("video %s rendered, queuing post-edit (b-roll + captions)", v.id)
                 else:
                     await db.execute(update(Video).where(Video.id == v.id).values(
@@ -262,8 +271,9 @@ async def _poll_once() -> int:
 
     # Spawn the b-roll + captioning finalizer AFTER the commit so the 'captioning' status is
     # durable first (keeps the row out of the next poll cycle — no double-spawn).
-    for video_id, raw_url, project_id, tg_chat_id in to_caption:
-        asyncio.create_task(_broll_caption_and_finalize(video_id, raw_url, project_id, tg_chat_id))
+    for video_id, raw_url, project_id, tg_chat_id, script in to_caption:
+        asyncio.create_task(
+            _broll_caption_and_finalize(video_id, raw_url, project_id, tg_chat_id, script))
 
     return touched
 
