@@ -119,11 +119,13 @@ async def generate_mini_brochure_handler(db: AsyncSession, args: dict, ctx: dict
         )
 
     if not delivered and not pdf_url:
-        why = ("Telegram delivery failed" if tg_chat_id else "no Telegram chat is linked")
-        return {"error": "Brochure was rendered but could not be delivered: S3 upload "
-                         f"was denied and {why}. The S3 download link needs an admin to "
-                         "grant s3:PutObject on the assets bucket; until then delivery "
-                         "relies on Telegram. Please try again."}
+        if tg_chat_id:
+            return {"error": "Brochure was rendered but couldn't be delivered: the S3 download "
+                             "link needs an admin to grant s3:PutObject on the assets bucket, "
+                             "and Telegram delivery failed this time. Please try again."}
+        return {"error": "Brochure was rendered but there's no download link yet: it needs an "
+                         "admin to grant s3:PutObject on the assets bucket. Ask an admin to "
+                         "enable it — retrying won't help until then."}
 
     filled = sum(1 for n in context["numbers"] if n["v"] != "—")
     missing = [n["k"] for n in context["numbers"] if n["v"] == "—"]

@@ -10,7 +10,7 @@ from sqlalchemy import select, insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.core.profiles import get_profile, is_agent
-from app.db.models import Project, Video
+from app.db.models import AskAlphaMessage, Project, Video
 from app.integrations import bedrock_images, heygen
 from app.tools.registry import Tool, registry
 
@@ -492,6 +492,17 @@ async def create_promo_video_handler(db: AsyncSession, args: dict, ctx: dict) ->
             telegram_chat_id=tg_chat_id,
         ).returning(Video.id)
     )
+    # How the finished link reaches the agent depends on the channel: Telegram gets an
+    # automatic push from the poller; the web app has NO Telegram, so the agent polls
+    # ("is my video ready?"). Tell them the truth for THEIR channel — never promise
+    # Telegram on web.
+    on_telegram = bool(tg_chat_id) or (ctx.get("channel") or "").lower() == "telegram"
+    delivery = (
+        "You'll get a Telegram message with the captioned download link the moment it's ready."
+        if on_telegram else
+        "It'll be ready here in about a minute — just ask \"is my video ready?\" and I'll "
+        "post the download link right here in this chat."
+    )
     video_id = result.scalar_one()
     await db.commit()
 
@@ -513,11 +524,8 @@ async def create_promo_video_handler(db: AsyncSession, args: dict, ctx: dict) ->
         "voice_name": voice.get("name"),
         "background": background_source,
         "format": "1080x1920 vertical (Reels/TikTok)",
-        "message": (
-            "Video generation started. Typical wait is 1–2 minutes. "
-            + ("You'll get a Telegram message with the download link the moment it's ready."
-               if tg_chat_id else "Ask \"is my video ready?\" to check.")
-        ),
+        "delivery_channel": "telegram" if on_telegram else "web",
+        "message": "Video generation started. Typical wait is 1–2 minutes. " + delivery,
     }
 
 
@@ -759,6 +767,36 @@ registry.register(Tool(
 ))
 
 
+async def _latest_video_id_in_conversation(db: AsyncSession, conv_id) -> Optional[UUID]:
+    """The video_id the agent most recently kicked off IN THIS conversation, read back from
+    the persisted `video_job` cards. This is what scopes 'is my video ready?' to the right
+    chat: a request that never actually started a job (no card was written) can't resurface
+    an OLD, unrelated, already-delivered video from a previous conversation — which is exactly
+    the bug where a Monte Carlo request handed back a Grove-at-Sobha-Sanctuary link."""
+    if conv_id is None:
+        return None
+    rows = (await db.execute(
+        select(AskAlphaMessage.cards)
+        .where(
+            AskAlphaMessage.conversation_id == conv_id,
+            AskAlphaMessage.role == "assistant",
+            AskAlphaMessage.cards.isnot(None),
+        )
+        .order_by(AskAlphaMessage.id.desc())
+        .limit(50)
+    )).scalars().all()
+    for cards in rows:
+        if not isinstance(cards, list):
+            continue
+        for c in cards:
+            if isinstance(c, dict) and c.get("type") == "video_job" and c.get("video_id"):
+                try:
+                    return UUID(str(c["video_id"]))
+                except (ValueError, TypeError):
+                    continue
+    return None
+
+
 async def check_my_video_status_handler(db: AsyncSession, args: dict, ctx: dict) -> dict:
     user_id = ctx.get("user_id")
     if user_id is None:
@@ -768,6 +806,7 @@ async def check_my_video_status_handler(db: AsyncSession, args: dict, ctx: dict)
         return {"error": "This feature is only available to agents."}
 
     video_id_arg = args.get("video_id")
+    v = None
     if video_id_arg:
         try:
             target_id = UUID(str(video_id_arg))
@@ -776,35 +815,65 @@ async def check_my_video_status_handler(db: AsyncSession, args: dict, ctx: dict)
         v = (await db.execute(
             select(Video).where(Video.id == target_id, Video.requested_by == user_id)
         )).scalar_one_or_none()
+        if v is None:
+            return {"status": "none",
+                    "message": "I couldn't find a video with that id under your account."}
     else:
-        v = (await db.execute(
-            select(Video).where(Video.requested_by == user_id)
-            .order_by(Video.created_at.desc()).limit(1)
-        )).scalar_one_or_none()
+        # 1) The video THIS conversation actually started (scoped via the persisted card).
+        conv_vid = await _latest_video_id_in_conversation(db, ctx.get("conversation_id"))
+        if conv_vid is not None:
+            v = (await db.execute(
+                select(Video).where(Video.id == conv_vid, Video.requested_by == user_id)
+            )).scalar_one_or_none()
+        # 2) Safety net for a new tab / restarted session: a video of THEIRS that's still
+        #    rendering is unambiguously the one they're waiting on. We deliberately do NOT
+        #    fall back to an already-completed video from another conversation — that is what
+        #    served a stale, wrong link before.
+        if v is None:
+            v = (await db.execute(
+                select(Video).where(
+                    Video.requested_by == user_id,
+                    Video.status.in_(("pending", "processing")),
+                ).order_by(Video.created_at.desc()).limit(1)
+            )).scalar_one_or_none()
 
     if v is None:
-        return {"error": "No videos found for you yet. Generate one first."}
+        return {
+            "status": "none",
+            "message": "I don't see a video generating from this chat. Want me to start one?",
+        }
 
     project_name = None
     if v.project_id is not None:
-        p = (await db.execute(select(Project.name).where(Project.id == v.project_id))).scalar_one_or_none()
-        project_name = p
-    # Prefer the captioned version when it's ready; fall back to the raw HeyGen video.
-    share_url = v.captioned_video_url or v.video_url
-    return {
+        project_name = (await db.execute(
+            select(Project.name).where(Project.id == v.project_id)
+        )).scalar_one_or_none()
+
+    # A video is deliverable ONLY when genuinely completed AND a real URL exists. During the
+    # Descript caption step the poller keeps status='processing' while the RAW url is already
+    # populated — surfacing that as a finished link was the false-'ready' bug — so we gate the
+    # URL on completion. Prefer the captioned version; fall back to the raw HeyGen video.
+    completed = v.status == "completed"
+    share_url = (v.captioned_video_url or v.video_url) if completed else None
+    is_ready = completed and bool(share_url)
+
+    result = {
         "video_id": str(v.id),
         "status": v.status,
-        "video_url": share_url,
-        "raw_video_url": v.video_url,
-        "captioned_video_url": v.captioned_video_url,
-        "caption_status": v.caption_status,
-        "thumbnail_url": v.thumbnail_url,
+        "ready": is_ready,
         "project_id": v.project_id,
         "project_name": project_name,
-        "error_detail": v.error or v.caption_error,
         "created_at": v.created_at.isoformat() if v.created_at else None,
-        "completed_at": v.completed_at.isoformat() if v.completed_at else None,
     }
+    if is_ready:
+        # Only the deliverable URL is exposed (no raw/captioned internals), so the model has
+        # nothing stale or half-finished to paste.
+        result["video_url"] = share_url
+        result["thumbnail_url"] = v.thumbnail_url
+        result["completed_at"] = v.completed_at.isoformat() if v.completed_at else None
+    elif v.status == "failed":
+        result["error_detail"] = v.error or v.caption_error
+    return result
 
 
 registry.register(Tool(

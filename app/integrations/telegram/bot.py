@@ -106,7 +106,7 @@ def _format_cards(cards: list[dict]) -> str:
             pass
         elif kind == "video_status":
             status = c.get("status")
-            if status == "completed" and c.get("video_url"):
+            if c.get("ready") and c.get("video_url"):
                 lines.append(
                     f"\n✅ *Your video is ready!*\n"
                     f"Download / share: {c.get('video_url')}"
@@ -116,7 +116,7 @@ def _format_cards(cards: list[dict]) -> str:
                 lines.append(f"\n❌ *Video failed:* {detail}")
             else:
                 lines.append(
-                    f"\n⏳ Still rendering (status: {status}). Try again in a minute."
+                    "\n⏳ Still rendering. Try again in a minute."
                 )
         elif kind == "brochure":
             name = c.get("project_name") or "Project"
@@ -145,6 +145,19 @@ def _format_cards(cards: list[dict]) -> str:
                 lines.append(f"\n📊 *{label}* — {n} units.\nDownload (Excel): {c.get('xlsx_url')}{cap}")
             else:
                 lines.append(f"\n📊 The {label} export could not be delivered — please try again.")
+        elif kind == "flyer":
+            name = c.get("project_name") or "Project"
+            label = c.get("flyer_label") or "Flyer"
+            url = c.get("image_url")
+            sent = c.get("sent_to_telegram")
+            if sent and url:
+                lines.append(f"\n📸 *{name} — {label}* sent above.\nDownload: {url}")
+            elif sent:
+                lines.append(f"\n📸 *{name} — {label}* sent above as an image.")
+            elif url:
+                lines.append(f"\n📸 *{name} — {label} flyer is ready.*\nDownload: {url}")
+            else:
+                lines.append(f"\n📸 The {name} flyer could not be delivered — please try again.")
         elif kind == "comparison_pdf":
             names = c.get("project_names") or []
             title = " vs ".join(names) if names else "Property comparison"

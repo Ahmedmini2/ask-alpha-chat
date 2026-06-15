@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 import uuid
 import boto3
 from datetime import datetime, timezone
@@ -140,8 +141,10 @@ still never invent or adjust the numbers yourself.
 sheet / xlsx)" of the available inventory or available units — or to put the units they're looking \
 at into a file — use export_inventory_excel. Pass the SAME filters they searched with (unit_type, \
 bedrooms_min/max, min/max_unit_price, min/max_size, location) and/or project_name to export one \
-project's full inventory; it builds one row per available unit. After it returns, share xlsx_url so \
-it can be downloaded; on Telegram say the spreadsheet file has been sent (sent_to_telegram). If it \
+project's full inventory; it builds one row per available unit. After it returns, tell them the \
+spreadsheet is ready, but do NOT paste the download URL yourself — the system attaches the exact \
+link automatically (long signed links break if you retype them). On Telegram the Excel file is also \
+pushed into the chat (sent_to_telegram). If it \
 reports truncated=true, tell them it was capped and to narrow the filters for the rest. This exports \
 the FULL matching set (not just the 5 shown in chat), so reach for it whenever someone wants the list \
 as a file rather than read out in the reply.
@@ -216,9 +219,12 @@ script and show the FINAL script back to them. Land on exactly one final script.
 script?" Do NOT generate yet. Proceed only when the agent clearly signs off ("yes", "go ahead", \
 "confirm", "approved", "do it", etc.). If they ask for more changes instead, loop back to STEP 3.
     STEP 5 — GENERATE: NOW call create_promo_video with project_name + look + script (the final \
-agreed script, passed verbatim) + agent_name if for a teammate. After it returns, send ONE single \
-message: tell them the video is generating and the captioned download link will arrive on Telegram \
-automatically when ready. Do not send a second message.
+agreed script, passed verbatim) + agent_name if for a teammate. If it returns an `error`, tell the \
+agent generation did NOT start and why — do NOT claim it's generating. On success, send ONE single \
+message: tell them the video is generating (typically 1–2 minutes) and relay the tool result's \
+`message`/`delivery_channel` VERBATIM for how they'll receive it. NEVER promise Telegram delivery \
+unless delivery_channel is 'telegram' — on the web app (delivery_channel 'web') tell them to ask \
+"is my video ready?" in a minute and the link will appear here. Do not send a second message.
   Both tools are agents-only (anonymous users get an error → tell them to sign in). If \
 create_promo_video returns needs_look_choice or "Couldn't match look", show the look names it \
 returned and re-ask — never guess a look.
@@ -235,13 +241,17 @@ a vivid, cinematic, single-sentence prompt (e.g. user says "Burj Khalifa" → pa
 lighting, photorealistic, depth of field"). Do NOT mention the avatar/person in the prompt — \
 describe the scene only, since the avatar is composited in front of it.
 - If the agent asks "is my video ready?", "send me the link", "where's my video?", or any \
-follow-up about a previously-requested video, call check_my_video_status. If completed, share \
-the video_url verbatim so it can be downloaded or sent to clients. If still processing, tell \
-them to try again in a minute.
+follow-up about a previously-requested video, call check_my_video_status (it auto-scopes to the \
+video THIS chat started — you don't need to pass a video_id). Then go strictly by the result: if \
+ready=true, tell them it's ready — do NOT paste the link yourself, the system attaches the exact \
+one; if status is processing/pending, tell them it's still rendering — try again in a minute (never \
+invent or paste a link); if status is 'none' there is NO video from this chat — relay its `message` \
+and offer to start one (NEVER show or describe an older video); if status is 'failed', relay error_detail.
 - If the user asks for a "Branded PDF", "Mini PDF", "mini brochure", "project brochure/PDF" \
 or similar for a project, use generate_mini_brochure (agents only — anonymous users must sign \
 in). Resolve the project first (search_projects) and pass project_id. The call is synchronous \
-and takes up to a minute — after it returns, share the pdf_url so it can be downloaded; on \
+and takes up to a minute — after it returns, tell them the brochure is ready, but do NOT paste the \
+download URL yourself (the system attaches the exact link; long signed links break if retyped). On \
 Telegram the PDF file is also pushed into the chat automatically, so say it has been sent. \
 Investment metrics (net yield, area rent return, appreciation, Y5 value, time to sell) are \
 auto-filled from our area model; days on market stays blank unless provided. When the agent \
@@ -255,8 +265,9 @@ metrics_missing, briefly tell the agent they can fill them by stating the values
 agent-style "compare X and Y" expecting a deliverable, use generate_comparison_pdf. Resolve each \
 project first (search_projects) and pass project_id for each. It builds a branded single-page \
 "Side by Side" sheet ranking price/sqft, type, bedrooms, area, rental yield and an Alpha Score \
-verdict. The call is synchronous (~20–40s); after it returns, share the pdf_url and, on Telegram, \
-say the PDF has been sent. Rental yield defaults to a market-typical ESTIMATE and the Alpha Score is \
+verdict. The call is synchronous (~20–40s); after it returns, tell them the comparison is ready, but \
+do NOT paste the download URL yourself (the system attaches the exact link). On Telegram the PDF is \
+also pushed into the chat. Rental yield defaults to a market-typical ESTIMATE and the Alpha Score is \
 computed from real signals; annual appreciation and the 5-year value only appear when the agent \
 states an appreciation figure — when they do ("assume 7% appreciation", "X yields 6%"), pass it in \
 that project's per-property fields. NEVER invent yields, appreciation, or scores.
@@ -269,8 +280,10 @@ one branded portrait PNG. There are two variants via flyer_type: 'key_facts' (st
 payment plan, handover, location) and 'investment' (the Numbers at a Glance investment summary). \
 Pick the one they named — "investment insights"/"numbers"/"yields" → 'investment'; "key facts" or \
 a bare "flyer"/"image" → 'key_facts'. Resolve the project first (search_projects) and pass \
-project_id. The call is synchronous (~20–40s); after it returns, share image_url so it can be \
-downloaded, and on Telegram say the image has been sent (sent_to_telegram). Investment metrics are \
+project_id. The call is synchronous (~20–40s); after it returns, tell them the flyer is ready, but \
+do NOT paste the download URL yourself — the system attaches the exact link automatically (long \
+signed links break if you retype them). On Telegram the image is also sent into the chat \
+(sent_to_telegram). Investment metrics are \
 auto-filled from our area model; when the agent states their own numbers ("use 6% yield"), pass \
 them as the matching override arguments. NEVER invent override values. If the agent doesn't say \
 which variant they want, make the 'key_facts' one and mention you can also do the investment-insights image.
@@ -394,7 +407,8 @@ def _summarize_tool_result(name: str, result: dict) -> str:
     if name == "draft_video_scripts":
         return f"project={result.get('project_name')!r} scripts={result.get('count')}"
     if name == "check_my_video_status":
-        return f"video_id={result.get('video_id')} status={result.get('status')} url?={bool(result.get('video_url'))}"
+        return (f"video_id={result.get('video_id')} status={result.get('status')} "
+                f"ready={result.get('ready')} url?={bool(result.get('video_url'))}")
     if name == "generate_mini_brochure":
         return (f"project={result.get('project_id')} status={result.get('status')} "
                 f"telegram={result.get('sent_to_telegram')} url?={bool(result.get('pdf_url'))}")
@@ -539,16 +553,21 @@ def _build_cards(tool_calls: list[dict]) -> list[dict]:
                 "sent_to_telegram": result.get("sent_to_telegram"),
             })
         elif name == "check_my_video_status":
-            cards.append({
-                "type": "video_status",
-                "video_id": result.get("video_id"),
-                "status": result.get("status"),
-                "video_url": result.get("video_url"),
-                "thumbnail_url": result.get("thumbnail_url"),
-                "project_id": result.get("project_id"),
-                "project_name": result.get("project_name"),
-                "error_detail": result.get("error_detail"),
-            })
+            # 'none' = no video belongs to this chat — emit no card (the reply text carries
+            # it) so we never render a misleading "still rendering" panel for a job that
+            # doesn't exist.
+            if result.get("status") != "none":
+                cards.append({
+                    "type": "video_status",
+                    "video_id": result.get("video_id"),
+                    "status": result.get("status"),
+                    "ready": result.get("ready", False),
+                    "video_url": result.get("video_url"),
+                    "thumbnail_url": result.get("thumbnail_url"),
+                    "project_id": result.get("project_id"),
+                    "project_name": result.get("project_name"),
+                    "error_detail": result.get("error_detail"),
+                })
     return cards
 
 
@@ -560,6 +579,15 @@ async def _run_tool_loop(db: AsyncSession, messages: list[dict], ctx: dict) -> t
     if settings.enable_prompt_caching:
         system_blocks.append({"cachePoint": {"type": "default"}})
         tool_config = {**tool_config, "tools": [*tool_config["tools"], {"cachePoint": {"type": "default"}}]}
+    # A tiny per-turn channel note AFTER the cache point (keeps the big prompt cached). Stops
+    # the model promising Telegram delivery on the web app, where there is no Telegram.
+    if (ctx.get("channel") or "").lower() == "telegram":
+        system_blocks.append({"text": "DELIVERY CHANNEL: Telegram — files and finished videos "
+                                      "are pushed into this chat automatically."})
+    else:
+        system_blocks.append({"text": "DELIVERY CHANNEL: the web app, NOT Telegram. NEVER tell the "
+                                      "user anything will be sent to Telegram. Download links are "
+                                      "attached to your reply by the backend and shown as a card."})
     captured: list[dict] = []
 
     for _ in range(MAX_TOOL_ITERATIONS):
@@ -623,6 +651,72 @@ async def _run_tool_loop(db: AsyncSession, messages: list[dict], ctx: dict) -> t
     return "I'm having trouble — too many tool calls in a row. Try rephrasing.", captured
 
 
+# Tools that produce a downloadable file. The model must NOT retype these links itself:
+# they're ~600-char signed S3 URLs and the LLM reliably drops a character from the
+# signature, breaking the link (confirmed in prod — a 63-char instead of 64-char
+# X-Amz-Signature → SignatureDoesNotMatch). The backend strips any link the model pasted
+# and attaches the byte-exact one instead, on both the chats API and Telegram.
+_FILE_DOWNLOADS: dict[str, tuple[str, str]] = {
+    "generate_whatsapp_flyer": ("image_url", "📸 Download flyer"),
+    "generate_mini_brochure": ("pdf_url", "📄 Download brochure"),
+    "generate_comparison_pdf": ("pdf_url", "📄 Download comparison"),
+    "export_inventory_excel": ("xlsx_url", "📊 Download (Excel)"),
+    "check_my_video_status": ("video_url", "🎬 Download video"),
+}
+
+# Opaque, signature-bearing URLs the model sometimes echoes (and corrupts): S3 presigned
+# (X-Amz-…), Google/Descript presigned (X-Goog-…), and CloudFront-signed HeyGen video links
+# (Key-Pair-Id=…) — in bare or [text](url) markdown form. The backend re-attaches the byte-exact
+# link, so stripping the model's copy keeps a dropped-character link from ever shipping.
+_SIGNED_URL_RE = re.compile(
+    r"\[[^\]]*\]\(\s*<?https?://[^\s)>]*(?:X-Amz-|X-Goog-|Key-Pair-Id)[^\s)>]*>?\s*\)"  # [text](url)
+    r"|<?https?://[^\s<>]*(?:X-Amz-|X-Goog-|Key-Pair-Id)[^\s<>]*>?",                     # bare url
+    re.IGNORECASE,
+)
+
+
+def _download_links(tool_calls: list[dict]) -> list[tuple[str, str]]:
+    """(label, url) for every downloadable file produced this turn, in call order."""
+    out: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for call in tool_calls:
+        spec = _FILE_DOWNLOADS.get(call.get("name"))
+        if not spec:
+            continue
+        result = call.get("result")
+        if not isinstance(result, dict):
+            continue
+        url = result.get(spec[0])
+        if url and url not in seen:
+            seen.add(url)
+            out.append((spec[1], url))
+    return out
+
+
+def _strip_signed_urls(text: str) -> str:
+    """Remove any signed download URL the model pasted (it corrupts them) and tidy the
+    whitespace left behind. Applied on every channel so a broken link never ships."""
+    cleaned = _SIGNED_URL_RE.sub("", text or "")
+    # Drop a now-dangling lead-in the URL hung off ("download it here:", "Download:"),
+    # but only when it ends in a colon so ordinary prose ("Share it on WhatsApp!") is safe.
+    cleaned = re.sub(
+        r"(?im)[ \t]*\b(?:you can |to )?(?:download|access|grab|get|find)\b[^.\n:]{0,30}:[ \t]*$",
+        "", cleaned,
+    )
+    cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)      # trailing spaces on a line
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)      # gaps where a URL was removed
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
+
+
+def _append_download_links(text: str, links: list[tuple[str, str]]) -> str:
+    """Append the backend-held, byte-exact download link(s) under the reply."""
+    if not links:
+        return text
+    block = "\n".join(f"{label}: {url}" for label, url in links)
+    return (text + "\n\n" + block).strip() if text else block
+
+
 async def chat_turn(
     db: AsyncSession,
     user_message: str,
@@ -655,6 +749,14 @@ async def chat_turn(
     }
     reply_text, tool_calls = await _run_tool_loop(db, messages, ctx)
     cards = _build_cards(tool_calls)
+
+    # The model corrupts long signed download URLs when it retypes them, so never let one
+    # it pasted reach the user. On Telegram the link rides along in the card text
+    # (_format_cards); on the chats API the frontend renders the card, but we also append
+    # the byte-exact link to the reply so a plain-text client always has a working one.
+    reply_text = _strip_signed_urls(reply_text or "")
+    if channel != "telegram":
+        reply_text = _append_download_links(reply_text, _download_links(tool_calls))
 
     try:
         asst = await _insert_message(db, conv_id, "assistant", reply_text or "", cards=cards or None)

@@ -92,9 +92,13 @@ async def generate_comparison_pdf_handler(db: AsyncSession, args: dict, ctx: dic
         )
 
     if not delivered and not pdf_url:
-        return {"error": "Comparison was rendered but could not be delivered: S3 upload "
-                         "failed and no Telegram chat is linked. Ask an admin to grant "
-                         "s3:PutObject on the assets bucket."}
+        if tg_chat_id:
+            return {"error": "Comparison was rendered but couldn't be delivered: the S3 download "
+                             "link needs an admin to grant s3:PutObject on the assets bucket, and "
+                             "Telegram delivery failed this time. Please try again."}
+        return {"error": "Comparison was rendered but there's no download link yet: it needs an "
+                         "admin to grant s3:PutObject on the assets bucket. Ask an admin to "
+                         "enable it — retrying won't help until then."}
 
     alpha = [c["disp"] for c in context["alpha"]["cells"]]
     log.info("comparison ready ids=%s size=%dKB url=%s telegram=%s",
