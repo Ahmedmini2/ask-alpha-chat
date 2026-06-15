@@ -42,6 +42,12 @@ class Settings(BaseSettings):
     alpha_verdict_max_age_days: int = 7
     alpha_verdict_intent: str = "yield"   # the website's quickVerdict intent
 
+    # Chat memory window. The model (Claude on Bedrock) has a ~200K-token window, so we can keep
+    # far more than the old 10-message cap; we send up to N recent messages bounded by a character
+    # budget so a few huge pastes can't blow the context. Raise either to give Alpha a longer memory.
+    chat_history_max_messages: int = 60        # up to this many recent messages (≈30 turns)
+    chat_history_char_budget: int = 60_000     # ~15K tokens; trims the oldest beyond this
+
     # HeyGen (AI avatar video generation)
     heygen_api_key: str = ""
     heygen_avatar_id: str = "Daisy-inskirt-20220818"   # HeyGen's default sample avatar

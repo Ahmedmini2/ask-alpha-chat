@@ -337,7 +337,6 @@ which variant they want, make the 'key_facts' one and mention you can also do th
 """
 
 MAX_TOOL_ITERATIONS = 10  # higher than 5 to accommodate bulk video requests
-HISTORY_WINDOW = 10  # last N messages passed back to the LLM
 
 
 async def _get_or_create_conversation(
@@ -364,15 +363,40 @@ async def _get_or_create_conversation(
 
 
 async def _load_history(db: AsyncSession, conversation_id: uuid.UUID) -> list[dict]:
-    """Return the last HISTORY_WINDOW messages as Bedrock-shaped dicts, oldest first."""
+    """Return recent messages as Bedrock-shaped dicts, oldest first.
+
+    Bedrock's window is ~200K tokens, so memory is bounded by our own budget, NOT a tiny fixed
+    count (the old 10-message cap made Alpha forget anything older than ~5 turns and contradict
+    itself in long chats). We pull up to `chat_history_max_messages` and then keep the NEWEST
+    messages whose combined length fits `chat_history_char_budget`, so a few very long pastes can't
+    overflow the context while normal chats keep their full history. The kept slice must start with
+    a 'user' message (Bedrock requires the first message to be the user and roles to alternate)."""
     rows = (await db.execute(
         select(AskAlphaMessage)
         .where(AskAlphaMessage.conversation_id == conversation_id)
         .order_by(AskAlphaMessage.id.desc())
-        .limit(HISTORY_WINDOW)
-    )).scalars().all()
-    rows = list(reversed(rows))
-    return [{"role": r.role, "content": [{"text": r.content}]} for r in rows]
+        .limit(settings.chat_history_max_messages)
+    )).scalars().all()  # newest-first
+    return _trim_history(rows, settings.chat_history_char_budget)
+
+
+def _trim_history(rows_newest_first, char_budget: int) -> list[dict]:
+    """Pure history-budgeting (unit-tested). Takes message rows NEWEST-first (each with .role/.content),
+    keeps the newest ones whose combined content fits `char_budget` (always at least the latest),
+    and returns Bedrock-shaped dicts OLDEST-first that start with a 'user' message (Bedrock requires
+    the first message to be the user and roles to alternate; the stored history already alternates,
+    so we only drop a leading assistant left by the trim)."""
+    kept = []
+    used = 0
+    for r in rows_newest_first:  # walk newest -> oldest, stop once the budget is spent
+        used += len(r.content or "")
+        if kept and used > char_budget:
+            break
+        kept.append(r)
+    kept.reverse()  # oldest-first for the model
+    while kept and kept[0].role != "user":
+        kept.pop(0)
+    return [{"role": r.role, "content": [{"text": r.content}]} for r in kept]
 
 
 async def _insert_message(
