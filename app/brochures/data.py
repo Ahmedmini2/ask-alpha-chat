@@ -477,10 +477,32 @@ async def compute_financials(
             v = _f(m.get(m_key))
         return v
 
-    net_yield = _metric("net_yield_pct", "net_yield_pct")
-    area_rent = _metric("area_avg_rent_pct", "area_avg_rent_return_pct")
-    appreciation = _metric("annual_appreciation_pct", "annual_appreciation_pct")
+    # The investment trio + Y5 come from the SHARED Alpha Verdict so the brochure/flyer match the
+    # website + chat exactly (PM-backed where available). Agent overrides still win; the local
+    # area model (m) is the last fallback. Time-to-sell isn't part of the verdict, so it stays on m.
+    verdict_numbers: dict = {}
+    try:
+        from app.analytics.alpha_verdict import get_or_compute_verdict
+        _v = await get_or_compute_verdict(db, project.id)
+        verdict_numbers = (_v or {}).get("numbers", {}) or {}
+    except Exception:
+        verdict_numbers = {}
+
+    def _pref(ov_key: str, v_key: str, m_key: str) -> Optional[float]:
+        v = _f(ov.get(ov_key))
+        if v is not None:
+            return v
+        v = _f(verdict_numbers.get(v_key))
+        if v is not None:
+            return v
+        return _f(m.get(m_key)) if m is not None else None
+
+    net_yield = _pref("net_yield_pct", "net_yield_pct", "net_yield_pct")
+    area_rent = _pref("area_avg_rent_pct", "area_rent_return_pct", "area_avg_rent_return_pct")
+    appreciation = _pref("annual_appreciation_pct", "annual_appreciation_pct", "annual_appreciation_pct")
     y5_value = _f(ov.get("y5_projected_value_aed"))
+    if y5_value is None:
+        y5_value = _f(verdict_numbers.get("y5_value_aed"))
     if y5_value is None and appreciation is not None and entry_price:
         y5_value = entry_price * (1 + appreciation / 100.0) ** 5
     dom = _f(ov.get("days_on_market"))  # per-listing DOM — override-only, we don't store it

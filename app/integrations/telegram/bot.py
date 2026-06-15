@@ -118,6 +118,29 @@ def _format_cards(cards: list[dict]) -> str:
                 lines.append(
                     "\n⏳ Still rendering. Try again in a minute."
                 )
+        elif kind == "alpha_verdict":
+            name = c.get("project_name") or "This project"
+            n = c.get("numbers") or {}
+            badge = {"BUY": "🟢", "WATCH": "🟡", "SKIP": "🔴"}.get(c.get("verdict"), "•")
+            header = f"\n{badge} *{name} — {c.get('verdict')}* ({c.get('conviction')}/100 conviction)"
+            detail = []
+            if n.get("net_yield_pct") is not None:
+                detail.append(f"Net yield {n['net_yield_pct']}%")
+            if n.get("annual_appreciation_pct") is not None:
+                detail.append(f"Appreciation {n['annual_appreciation_pct']}%")
+            if n.get("y5_value_aed"):
+                detail.append(f"5-yr value AED {int(n['y5_value_aed']):,}")
+            lines.append(header + ("\n" + " · ".join(detail) if detail else ""))
+        elif kind == "live_market":
+            name = c.get("community") or c.get("project_name") or "Area"
+            bits = []
+            if c.get("valuation"):
+                bits.append(f"AVM AED {int(c['valuation']):,}")
+            if c.get("ppsf_aed"):
+                bits.append(f"{int(c['ppsf_aed'])}/sqft")
+            if c.get("observed_yield_pct"):
+                bits.append(f"yield {c['observed_yield_pct']}%")
+            lines.append(f"\n📈 *{name} — live market* (Property Monitor)\n" + " · ".join(bits))
         elif kind == "brochure":
             name = c.get("project_name") or "Project"
             if c.get("sent_to_telegram"):

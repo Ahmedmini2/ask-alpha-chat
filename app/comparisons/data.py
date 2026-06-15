@@ -222,21 +222,34 @@ async def build_comparison_context(
         analysis = await _analyze_one(db, project)
         facts = _unit_facts(project)
 
+        # Shared Alpha Verdict (website parity): drives yield/appreciation/Y5 + the Alpha cell so
+        # the comparison matches the chat + brochure + site. Agent overrides still win.
+        from app.analytics.alpha_verdict import get_or_compute_verdict
+        verdict = (await get_or_compute_verdict(db, project.id)) or {}
+        vn = verdict.get("numbers", {}) or {}
+
         psf = _price_per_sqft(analysis, project, ov)
-        # Rental yield: agent's stated figure wins; otherwise the market-typical
-        # ESTIMATE band midpoint we already compute for analyze_investment.
         net_yield = _f(ov.get("net_yield_pct"))
         if net_yield is None:
+            net_yield = _f(vn.get("net_yield_pct"))
+        if net_yield is None:  # last resort: the analyze_investment band midpoint
             ry = analysis.get("rental_yield_estimate") or {}
             lo, hi = _f(ry.get("gross_yield_low_pct")), _f(ry.get("gross_yield_high_pct"))
             if lo and hi:
                 net_yield = round((lo + hi) / 2, 1)
         appr = _f(ov.get("annual_appreciation_pct"))
+        if appr is None:
+            appr = _f(vn.get("annual_appreciation_pct"))
         entry = facts["entry"]
         value5 = _f(ov.get("y5_projected_value_aed"))
+        if value5 is None:
+            value5 = _f(vn.get("y5_value_aed"))
         if value5 is None and appr is not None and entry:
             value5 = entry * (1 + appr / 100.0) ** 5
-        alpha = _alpha_score(analysis, ov)
+        # Alpha cell = the verdict conviction (BUY/WATCH/SKIP backed); override wins.
+        alpha = _f(ov.get("alpha_score"))
+        alpha = int(round(alpha)) if alpha is not None else (
+            int(round(verdict["conviction"])) if verdict.get("conviction") is not None else None)
 
         dom_type = (analysis.get("dominant_unit_type") or "").strip()
         ptype = "—"
