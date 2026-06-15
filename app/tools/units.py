@@ -51,8 +51,15 @@ async def search_units_handler(db: AsyncSession, args: dict, ctx: dict) -> dict:
     unit_types = _normalize_unit_types(args.get("unit_type"))
     bedrooms_min = args.get("bedrooms_min")
     bedrooms_max = args.get("bedrooms_max")
+    # Accept the budget under either the unit-level names OR the project-level names
+    # (min_price/max_price). A bedroom query like "1-bed under 1.5M" must ALWAYS apply the price
+    # to the matching units — never silently drop it because the model used the other arg name.
     min_unit_price = args.get("min_unit_price")
+    if min_unit_price is None:
+        min_unit_price = args.get("min_price")
     max_unit_price = args.get("max_unit_price")
+    if max_unit_price is None:
+        max_unit_price = args.get("max_price")
     min_size = args.get("min_size")
     max_size = args.get("max_size")
     location = args.get("location")
@@ -157,10 +164,12 @@ async def search_units_handler(db: AsyncSession, args: dict, ctx: dict) -> dict:
         _vc = vmap.get(p.id)
         summary["verdict"] = _vc[0] if _vc else None
         summary["conviction"] = round(_vc[1]) if _vc else None
+        mu_min = float(row.unit_min_price) if row.unit_min_price is not None else None
+        mu_max = float(row.unit_max_price) if row.unit_max_price is not None else None
         summary["matched_units"] = {
             "count": int(row.matched_units) if row.matched_units is not None else 0,
-            "min_price": float(row.unit_min_price) if row.unit_min_price is not None else None,
-            "max_price": float(row.unit_max_price) if row.unit_max_price is not None else None,
+            "min_price": mu_min,
+            "max_price": mu_max,
             "bedrooms_min": float(row.bed_min) if row.bed_min is not None else None,
             "bedrooms_max": float(row.bed_max) if row.bed_max is not None else None,
             "size_min": float(row.size_min) if row.size_min is not None else None,
@@ -168,6 +177,12 @@ async def search_units_handler(db: AsyncSession, args: dict, ctx: dict) -> dict:
             "unit_types": [t for t in (row.unit_types or []) if t],
             "currency": p.currency,
         }
+        # The card's headline price must reflect the MATCHED units, not the project's overall
+        # starting price (which may be a cheaper studio). For a "1-bed under 1.5M" query the card
+        # shows the cheapest matching 1-bed, never the studio.
+        if mu_min is not None:
+            summary["min_price"] = mu_min
+            summary["max_price"] = mu_max
         projects.append(summary)
 
     return {
@@ -233,8 +248,14 @@ registry.register(Tool(
             },
             "max_unit_price": {
                 "type": "number",
-                "description": "Upper bound on the UNIT price in AED, e.g. 'under 10M' -> 10000000.",
+                "description": (
+                    "Upper bound on the UNIT price in AED, e.g. 'under 10M' -> 10000000. This is the "
+                    "budget for the SPECIFIC bedroom/unit type requested — it filters the matching "
+                    "units, NOT the project's overall starting price. (max_price is accepted as an alias.)"
+                ),
             },
+            "min_price": {"type": "number", "description": "Alias for min_unit_price (per-unit lower bound, AED)."},
+            "max_price": {"type": "number", "description": "Alias for max_unit_price (per-unit upper bound, AED)."},
             "min_size": {
                 "type": "number",
                 "description": "Minimum unit size in square feet (sqft).",

@@ -124,11 +124,17 @@ lead. There is no sort option to set; this ranking is automatic. For "best / top
 best-value" requests, just run the normal search (search_units if a bedroom/unit attribute is \
 mentioned, else search_projects) — the top cards already ARE the strongest.
 - When the user asks for properties within a budget ("under 1M dirhams", "below 2M AED", \
-"between 500K and 1M"), pass the explicit `min_price` and/or `max_price` arguments to \
-search_projects. Convert shorthand to absolute numbers ("1M" → 1000000, "500K" → 500000). \
-Default currency is AED. The tool filters out projects with zero/missing price and returns the \
-matches ranked by Alpha conviction (price ascending breaks ties) — present them in that order \
-without re-sorting.
+"between 500K and 1M"), pass the explicit `min_price` and/or `max_price` arguments. Convert \
+shorthand to absolute numbers ("1M" → 1000000, "500K" → 500000). Default currency is AED. \
+CRITICAL — a budget COMBINED with a bedroom/unit type ("1-bedroom under 1.5M", "2BR below 2M", \
+"studio under 700k") MUST go to search_units with bedrooms_min/bedrooms_max (set both equal for \
+an exact count; studio = 0) AND the price (max_price/min_price). search_units applies the budget \
+to the UNITS OF THAT BEDROOM TYPE, so a project only matches if a unit of that type is in budget — \
+and the card's price + matched-units count reflect only those units. Do NOT use search_projects \
+for a bedroom+budget query: its price filter is the project's OVERALL starting price, which can be \
+a cheaper studio, so it would wrongly surface projects with no in-budget unit of the requested type. \
+Use search_projects' budget filter only for project-level "any property under X" with no bedroom/unit \
+type. Both tools return matches ranked by Alpha conviction — present them in that order without re-sorting.
 - For PROXIMITY questions — "near", "close to", "within N km of" a place — use \
 search_nearby_projects with the area name (or lat/lng); it returns projects nearest-first, and each \
 card shows distance_km plus its Alpha conviction score (conviction breaks ties between equally-near projects).
