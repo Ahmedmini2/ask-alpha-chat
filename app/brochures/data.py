@@ -112,6 +112,43 @@ def fmt_quarter(q: Optional[str]) -> Optional[str]:
     return f"Q{m.group(2)} '{m.group(1)[2:]}"
 
 
+def _date_quarter(d) -> Optional[str]:
+    """A date -> "Q3 '27"."""
+    if not d:
+        return None
+    try:
+        return f"Q{(d.month - 1) // 3 + 1} '{d.year % 100:02d}"
+    except (AttributeError, TypeError):
+        return None
+
+
+def handover_label(project) -> Optional[str]:
+    """Best-available handover/completion string, with a CONSTRUCTION fallback for the many
+    projects that carry no handover date. Order: explicit handover quarter -> handover date ->
+    construction end date (the anticipated handover) -> construction progress value
+    (readiness %). Returns None only when none of these exist."""
+    q = fmt_quarter(getattr(project, "completion_quarter", None))
+    if q:
+        return q
+    for d in (getattr(project, "completion_date", None),
+              getattr(project, "construction_end_date", None)):
+        dq = _date_quarter(d)
+        if dq:
+            return dq
+    rp = getattr(project, "readiness_progress", None)
+    if rp is not None:
+        try:
+            rp = float(rp)
+        except (TypeError, ValueError):
+            rp = None
+        if rp is not None:
+            if rp >= 100:
+                return "Ready"
+            if rp > 0:
+                return f"{rp:.0f}% built"
+    return None
+
+
 def clean_text(s: Optional[str]) -> str:
     return re.sub(r"\s+", " ", (s or "").replace("\xa0", " ")).strip()
 
@@ -599,7 +636,7 @@ async def build_context(
 
     district = clean_text(project.district)
     city = clean_text(project.city) or "Dubai"
-    handover = fmt_quarter(project.completion_quarter)
+    handover = handover_label(project)   # construction-date / progress fallback when no quarter
 
     # ---- photos: fetch + classify in batches, assign to layout slots ----
     images, plan_assets = await _gather_assets(db, project)

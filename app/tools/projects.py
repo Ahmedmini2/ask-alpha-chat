@@ -1,6 +1,7 @@
 from typing import Any
 from sqlalchemy import select, or_, func, case
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.brochures.data import handover_label as _handover_label
 from app.db.models import Project, ProjectAlphaVerdict, ProjectUnit
 from app.tools.registry import Tool, registry
 
@@ -31,6 +32,9 @@ def _serialize_project_detail(p: Project) -> dict:
         "description": p.description,
         "amenities": p.amenities,
         "completion_date": p.completion_date.isoformat() if p.completion_date else None,
+        # Display-ready handover with a construction fallback (construction end date / progress)
+        # for the ~23% of projects that carry no handover quarter or date.
+        "handover": _handover_label(p),
         "post_handover": p.post_handover,
         "has_escrow": p.has_escrow,
         "service_charge": p.service_charge,

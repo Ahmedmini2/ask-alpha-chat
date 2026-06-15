@@ -24,6 +24,7 @@ from app.brochures.data import (
     clean_text,
     compute_financials,
     fmt_quarter,
+    handover_label,
 )
 from app.db.models import Developer, Project, ProjectAsset
 
@@ -91,6 +92,31 @@ def _payment_facts(project: Project, handover: Optional[str]) -> tuple[Optional[
     return headline, sub
 
 
+def _handover_facts(project: Project) -> tuple[str, str]:
+    """(value, sub) for the flyer Handover cell, with the construction fallback for projects with
+    no handover quarter: handover quarter -> handover/construction date -> construction progress."""
+    ql = _quarter_long(project.completion_quarter)
+    if ql:
+        return ql, "Anticipated"
+    for d in (project.completion_date, getattr(project, "construction_end_date", None)):
+        if d:
+            try:
+                return f"Q{(d.month - 1) // 3 + 1} {d.year}", "Anticipated"
+            except (AttributeError, TypeError):
+                pass
+    rp = getattr(project, "readiness_progress", None)
+    if rp is not None:
+        try:
+            rp = float(rp)
+        except (TypeError, ValueError):
+            rp = None
+        if rp is not None and rp >= 100:
+            return "Ready", "Completed"
+        if rp is not None and rp > 0:
+            return f"{rp:.0f}% built", "Under construction"
+    return "TBA", "To be announced"
+
+
 def _key_facts(project: Project, unit_groups: list[dict], fin: dict, handover: Optional[str]) -> list[dict]:
     district = clean_text(project.district)
     city = clean_text(project.city)
@@ -100,7 +126,7 @@ def _key_facts(project: Project, unit_groups: list[dict], fin: dict, handover: O
 
     entry = fin.get("entry_compact")  # 'AED 4.08M'
     pay_head, pay_sub = _payment_facts(project, handover)
-    hand_long = _quarter_long(project.completion_quarter)
+    hand_long, hand_sub = _handover_facts(project)
 
     return [
         {
@@ -118,8 +144,8 @@ def _key_facts(project: Project, unit_groups: list[dict], fin: dict, handover: O
         {
             "label": "Handover",
             "unit": None,
-            "value": hand_long or "TBA",
-            "sub": "Anticipated" if hand_long else "To be announced",
+            "value": hand_long,
+            "sub": hand_sub,
         },
         {
             "label": "Location",
@@ -161,7 +187,7 @@ async def build_flyer_context(
 
     district = clean_text(project.district)
     city = clean_text(project.city) or "Dubai"
-    handover = fmt_quarter(project.completion_quarter)
+    handover = handover_label(project)   # construction-date / progress fallback when no quarter
 
     unit_groups = await _gather_units(db, project)
 
