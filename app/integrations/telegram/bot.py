@@ -120,7 +120,7 @@ def _format_cards(cards: list[dict]) -> str:
                     dev = p.get("developer") or ""
                     lines.append(f"  • *{p.get('name')}* ({dev}, {loc}){price}")
         elif kind == "video_job":
-            # No extra text: STEP 5's own reply already says the video is generating and the
+            # No extra text: STEP 6's own reply already says the video is generating and the
             # captioned link will arrive automatically. The poller posts the link as its own
             # message when ready, so adding a card here would just clutter that single message.
             pass

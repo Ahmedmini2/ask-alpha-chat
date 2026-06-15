@@ -65,8 +65,13 @@ def _normalize(src: str, dst: str, w: int, h: int, fps: float, cfg: "broll.Broll
     common_v = ["-c:v", "libx264", "-preset", cfg.preset, "-crf", str(cfg.crf), "-pix_fmt", "yuv420p"]
     common_a = ["-c:a", "aac", "-ar", "44100", "-ac", "2"]
     if _has_audio(src, cfg):
-        args = [cfg.ffmpeg, "-y", "-i", src, "-vf", vf,
-                "-map", "0:v:0", "-map", "0:a:0", *common_v, *common_a,
+        # Pin the audio length to the video length: `apad` pads short audio with silence and
+        # `-shortest` (video ends first) trims long audio, so audio_len == video_len exactly.
+        # xfade pins the video transition to a fixed timestamp while acrossfade always anchors to
+        # the FIRST input's audio length; if the two differed the outro audio would lead/lag its
+        # video. Forcing audio==video here (for both clips) keeps the two transitions coincident.
+        args = [cfg.ffmpeg, "-y", "-i", src, "-vf", vf, "-af", "apad",
+                "-map", "0:v:0", "-map", "0:a:0", "-shortest", *common_v, *common_a,
                 "-movflags", "+faststart", dst]
     else:
         # Synthesise a silent stereo track and trim it to the video length (-shortest).
@@ -83,20 +88,27 @@ def _append_sync(main_bytes: bytes, cfg: "broll.BrollConfig") -> bytes:
         main_path = tmpp / "main.mp4"
         main_path.write_bytes(main_bytes)
 
-        w, h, fps, main_dur = broll._probe(str(main_path), cfg)
+        w, h, fps, _main_dur = broll._probe(str(main_path), cfg)
         asset = _outro_asset_for(w, h)
         if not asset.is_file():
             raise OutroError(f"outro asset missing: {asset.name}")
-        _, _, _, outro_dur = broll._probe(str(asset), cfg)
-
-        # Keep the transition shorter than either clip; both must be at least `D` long for xfade.
-        d = _transition_duration(main_dur, outro_dur)
-        offset = max(0.0, main_dur - d)
 
         main_n = tmpp / "main_n.mp4"
         outro_n = tmpp / "outro_n.mp4"
         _normalize(str(main_path), str(main_n), w, h, fps, cfg)
         _normalize(str(asset), str(outro_n), w, h, fps, cfg)
+
+        # Derive the transition from the NORMALIZED clips: after _normalize each clip has
+        # audio_len == video_len, so the xfade `offset` (= main_n duration - d) coincides with
+        # acrossfade's implicit anchor (first input's audio length - d). Using the pre-normalize
+        # probe instead would re-introduce skew when the original container duration (= the longer
+        # of its streams) differed from the normalized clip's duration.
+        _, _, _, main_dur = broll._probe(str(main_n), cfg)
+        _, _, _, outro_dur = broll._probe(str(outro_n), cfg)
+
+        # Keep the transition shorter than either clip; both must be at least `D` long for xfade.
+        d = _transition_duration(main_dur, outro_dur)
+        offset = max(0.0, main_dur - d)
 
         out_path = tmpp / "out.mp4"
         fc = (f"[0:v][1:v]xfade=transition=fade:duration={d:.3f}:offset={offset:.3f}[v];"
@@ -104,7 +116,8 @@ def _append_sync(main_bytes: bytes, cfg: "broll.BrollConfig") -> bytes:
         args = [cfg.ffmpeg, "-y", "-i", str(main_n), "-i", str(outro_n),
                 "-filter_complex", fc, "-map", "[v]", "-map", "[a]",
                 "-c:v", "libx264", "-preset", cfg.preset, "-crf", str(cfg.crf),
-                "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "+faststart", str(out_path)]
+                "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest",
+                "-movflags", "+faststart", str(out_path)]
         broll._run_ffmpeg(args, cfg.timeout_sec)
 
         data = out_path.read_bytes()
