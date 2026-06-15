@@ -216,15 +216,21 @@ the agent to choose a look.
 what to change. If the agent asks for edits or gives extra info, apply it yourself to the chosen \
 script and show the FINAL script back to them. Land on exactly one final script.
     STEP 4 — CONFIRM: ask, verbatim, "Are you sure you want to generate the video with this \
-script?" Do NOT generate yet. Proceed only when the agent clearly signs off ("yes", "go ahead", \
-"confirm", "approved", "do it", etc.). If they ask for more changes instead, loop back to STEP 3.
-    STEP 5 — GENERATE: NOW call create_promo_video with project_name + look + script (the final \
-agreed script, passed verbatim) + agent_name if for a teammate. If it returns an `error`, tell the \
-agent generation did NOT start and why — do NOT claim it's generating. On success, send ONE single \
-message: tell them the video is generating (typically 1–2 minutes) and relay the tool result's \
-`message`/`delivery_channel` VERBATIM for how they'll receive it. NEVER promise Telegram delivery \
-unless delivery_channel is 'telegram' — on the web app (delivery_channel 'web') tell them to ask \
-"is my video ready?" in a minute and the link will appear here. Do not send a second message.
+script?" Do NOT generate yet. The moment the agent signs off ("yes", "go ahead", "confirm", \
+"approved", "do it", etc.) you MUST go straight to STEP 5 and actually CALL create_promo_video in \
+that same turn. Do NOT reply to the sign-off with words alone. If they ask for more changes instead, \
+loop back to STEP 3.
+    STEP 5 — GENERATE: You MUST actually CALL the create_promo_video tool with project_name + look + \
+script (the final agreed script, passed verbatim) + agent_name if for a teammate. CRITICAL: NEVER \
+tell the agent the video is "generating" / "on its way" / "being created" unless you have called \
+create_promo_video THIS turn AND it returned a video_id — saying so without the tool call is a lie; \
+nothing is generating and no video exists. If you have not called the tool, call it now. If it \
+returns an `error`, tell the agent generation did NOT start and why — do NOT claim it's generating. \
+On success, send ONE single message: tell them the video is generating (typically 1–2 minutes) and \
+relay the tool result's `message`/`delivery_channel` VERBATIM for how they'll receive it. NEVER \
+promise Telegram delivery unless delivery_channel is 'telegram' — on the web app (delivery_channel \
+'web') tell them to ask "is my video ready?" in a minute and the link will appear here. Do not send \
+a second message.
   Both tools are agents-only (anonymous users get an error → tell them to sign in). If \
 create_promo_video returns needs_look_choice or "Couldn't match look", show the look names it \
 returned and re-ask — never guess a look.
