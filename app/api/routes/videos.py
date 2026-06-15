@@ -35,7 +35,7 @@ async def get_video(video_id: UUID, db: AsyncSession = Depends(get_db)):
     # this endpoint must not treat that as finished. Mirror the chat tool: prefer the captioned
     # version, and expose a url only once completed.
     completed = v.status == "completed"
-    share_url = (v.captioned_video_url or v.video_url) if completed else None
+    share_url = (v.captioned_video_url or v.broll_video_url or v.video_url) if completed else None
     return VideoOut(
         id=v.id,
         requested_by=v.requested_by,

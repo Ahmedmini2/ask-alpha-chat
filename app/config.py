@@ -66,6 +66,30 @@ class Settings(BaseSettings):
     # without creating a public share page.
     descript_caption_access_level: str = "private"
 
+    # B-roll post-edit (ffmpeg): after HeyGen renders, cut full-screen Ken-Burns stills of the
+    # property into the middle of the video (avatar stays for hook + CTA), narration continuous.
+    # Best-effort — any failure falls back to the raw HeyGen video. Runs BEFORE Descript captions
+    # so the captions overlay the final composite. Requires ffmpeg in the image (see Dockerfile).
+    broll_enabled: bool = True
+    broll_max_clips: int = 5            # cap on b-roll stills cut in per video
+    broll_concurrency: int = 1          # ffmpeg is CPU-heavy; one encode at a time
+    ffmpeg_path: str = "ffmpeg"
+    ffprobe_path: str = "ffprobe"
+    broll_ffmpeg_timeout_sec: int = 300
+    broll_head_ratio: float = 0.25      # fraction of duration the avatar holds at the start (hook)
+    broll_tail_ratio: float = 0.25      # fraction the avatar holds at the end (CTA)
+    broll_head_min_sec: float = 3.0
+    broll_head_max_sec: float = 12.0
+    broll_tail_min_sec: float = 3.0
+    broll_tail_max_sec: float = 10.0
+    broll_min_total_dur_sec: float = 12.0   # shorter videos stay all-avatar (no b-roll)
+    broll_target_segment_sec: float = 4.0
+    broll_min_segment_sec: float = 2.5
+    broll_max_segment_sec: float = 7.0
+    broll_crf: int = 20
+    broll_preset: str = "veryfast"
+    broll_zoom_max: float = 1.18
+
     # Telegram bot
     telegram_bot_token: str = ""
 

@@ -20,7 +20,13 @@ _s3 = boto3.client("s3", region_name=settings.s3_assets_region)
 
 PDF_KEY_PREFIX = "generated/brochures"
 PNG_KEY_PREFIX = "generated/flyers"
+MP4_KEY_PREFIX = "generated/videos"
 PRESIGN_TTL_SEC = 7 * 24 * 3600  # 7 days — the SigV4 maximum
+
+# The shared assets bucket. (Also defined in app/tools/brochures.py / inventory_export.py for
+# the tool handlers; defined here too so non-tool code — e.g. the video poller — can upload
+# without importing the tools package and its registration side effects.)
+ASSETS_BUCKET = "assets-allegiance"
 
 
 def _get_object_bytes(bucket: str, key: str) -> bytes:
@@ -70,6 +76,23 @@ async def upload_png(png_bytes: bytes, name: str, bucket: str) -> tuple[str, str
 
     def _put_and_sign() -> str:
         _s3.put_object(Bucket=bucket, Key=key, Body=png_bytes, ContentType="image/png")
+        return _s3.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": bucket, "Key": key},
+            ExpiresIn=PRESIGN_TTL_SEC,
+        )
+
+    url = await asyncio.to_thread(_put_and_sign)
+    return key, url
+
+
+async def upload_mp4(mp4_bytes: bytes, name: str, bucket: str) -> tuple[str, str]:
+    """Store a composited promo video; returns (s3_key, presigned_url). Served inline so
+    Descript (and the agent) can fetch it by URL."""
+    key = f"{MP4_KEY_PREFIX}/{slugify(name)}-{uuid.uuid4().hex[:8]}.mp4"
+
+    def _put_and_sign() -> str:
+        _s3.put_object(Bucket=bucket, Key=key, Body=mp4_bytes, ContentType="video/mp4")
         return _s3.generate_presigned_url(
             "get_object",
             Params={"Bucket": bucket, "Key": key},

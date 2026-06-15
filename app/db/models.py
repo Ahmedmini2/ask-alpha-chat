@@ -216,6 +216,12 @@ class Video(Base):
     captioned_video_url: Mapped[Optional[str]] = mapped_column(Text)
     caption_status: Mapped[Optional[str]] = mapped_column(Text)
     caption_error: Mapped[Optional[str]] = mapped_column(Text)
+    # B-roll post-edit (ffmpeg). Runs before captioning; broll_video_url is the composited but
+    # UNCAPTIONED mp4, delivered only when captioning later fails. broll_status:
+    # NULL | 'processing' | 'done' | 'skipped' | 'failed'.
+    broll_video_url: Mapped[Optional[str]] = mapped_column(Text)
+    broll_status: Mapped[Optional[str]] = mapped_column(Text)
+    broll_error: Mapped[Optional[str]] = mapped_column(Text)
 
 
 class DocumentChunk(Base):

@@ -6,9 +6,11 @@ from uuid import UUID
 import httpx
 from sqlalchemy import select, update
 from app.config import settings
+from app.brochures import storage
 from app.db.models import Project, Video
 from app.db.session import AsyncSessionLocal
 from app.integrations import descript, heygen
+from app.videos import broll
 
 log = logging.getLogger("askalpha.heygen_poller")
 
@@ -40,19 +42,75 @@ async def _project_name(db, project_id: Optional[int]) -> str:
     return name or ""
 
 
-async def _caption_and_finalize(
+async def _set_broll(video_id: UUID, *, status: str,
+                     url: Optional[str] = None, error: Optional[str] = None) -> None:
+    """Record the b-roll outcome on the video row (its own columns; status is untouched)."""
+    async with AsyncSessionLocal() as db:
+        vals: dict = {"broll_status": status, "updated_at": datetime.now(timezone.utc)}
+        if url is not None:
+            vals["broll_video_url"] = url
+        if error is not None:
+            vals["broll_error"] = error
+        await db.execute(update(Video).where(Video.id == video_id).values(**vals))
+        await db.commit()
+
+
+async def _maybe_broll(video_id: UUID, raw_url: str, project_id: Optional[int]) -> Optional[str]:
+    """Best-effort b-roll edit. Returns the hosted URL of the composite to caption, or None to
+    keep the raw HeyGen video. Records broll_status / broll_video_url / broll_error. Never raises."""
+    if not settings.broll_enabled or project_id is None:
+        return None
+    try:
+        src = await broll._fetch_bytes(raw_url)
+        if not src:
+            raise broll.BrollError("source download failed")
+        aspect = await broll.detect_aspect(src)
+        seed = int(video_id.hex[:8], 16)
+        async with AsyncSessionLocal() as db:
+            project = (await db.execute(
+                select(Project).where(Project.id == project_id)
+            )).scalar_one_or_none()
+            name = project.name if project else "promo"
+            blobs = (await broll.gather_broll_images(
+                db, project, settings.broll_max_clips, aspect, seed=seed
+            )) if project is not None else []
+        if not blobs:
+            await _set_broll(video_id, status="skipped")
+            return None
+        mp4 = await broll.add_broll(src, blobs, aspect, seed=seed)
+        if mp4 is None:                                  # too short / no b-roll segments
+            await _set_broll(video_id, status="skipped")
+            return None
+        _key, url = await storage.upload_mp4(mp4, name, storage.ASSETS_BUCKET)
+        await _set_broll(video_id, status="done", url=url)
+        log.info("video %s b-roll composited (%d clips)", video_id, len(blobs))
+        return url
+    except Exception as e:
+        log.warning("video %s b-roll failed; captioning raw video: %s", video_id, e)
+        await _set_broll(video_id, status="failed", error=str(e)[:1000])
+        return None
+
+
+async def _broll_caption_and_finalize(
     video_id: UUID, raw_url: str, project_id: Optional[int], tg_chat_id: Optional[int]
 ) -> None:
-    """Send a finished HeyGen video through Descript for captions, then mark it complete and
-    notify. Best-effort: ANY failure falls back to the uncaptioned HeyGen video so the agent
-    always gets something. Fire-and-forget; the outer try keeps a crash from surfacing as an
-    unretrieved-task warning."""
-    async with _caption_sem:
-        try:
+    """Post-process a finished HeyGen video: (1) cut in property b-roll (best-effort), then
+    (2) caption the result via Descript, mark it complete, and send ONE notification. Every
+    step falls back to the raw HeyGen video so the agent always gets something. Fire-and-forget;
+    the outer try keeps a crash from surfacing as an unretrieved-task warning."""
+    try:
+        # Phase 1 — b-roll. Runs OUTSIDE the caption semaphore (it has its own concurrency
+        # guard), so b-roll on one video overlaps captioning of another.
+        broll_url = await _maybe_broll(video_id, raw_url, project_id)
+        source_url = broll_url or raw_url          # what Descript captions
+        fallback_url = broll_url or raw_url        # delivered if captioning fails
+
+        # Phase 2 — captions.
+        async with _caption_sem:
             try:
-                captioned_url = await descript.caption_video(raw_url)
+                captioned_url = await descript.caption_video(source_url)
             except Exception as e:
-                log.warning("descript captioning failed for %s; delivering raw video: %s", video_id, e)
+                log.warning("descript captioning failed for %s; delivering uncaptioned: %s", video_id, e)
                 async with AsyncSessionLocal() as db:
                     now = datetime.now(timezone.utc)
                     await db.execute(update(Video).where(Video.id == video_id).values(
@@ -66,7 +124,7 @@ async def _caption_and_finalize(
                     await _notify_telegram(
                         int(tg_chat_id),
                         f"✅ Your video is ready{label}\n(captions weren't added this time)\n"
-                        f"Download / share:\n{raw_url}",
+                        f"Download / share:\n{fallback_url}",
                     )
                 return
 
@@ -85,8 +143,8 @@ async def _caption_and_finalize(
                     int(tg_chat_id),
                     f"✅ Your video is ready{label} (with captions)\nDownload / share:\n{captioned_url}",
                 )
-        except Exception as e:  # pragma: no cover — last-resort guard for the bg task
-            log.exception("caption_and_finalize crashed for %s: %s", video_id, e)
+    except Exception as e:  # pragma: no cover — last-resort guard for the bg task
+        log.exception("broll_caption_and_finalize crashed for %s: %s", video_id, e)
 
 
 async def _poll_once() -> int:
@@ -182,10 +240,10 @@ async def _poll_once() -> int:
     for chat_id, text in notifications:
         await _notify_telegram(chat_id, text)
 
-    # Spawn captioning AFTER the commit so the 'captioning' status is durable first
-    # (keeps the row out of the next poll cycle — no double-spawn).
+    # Spawn the b-roll + captioning finalizer AFTER the commit so the 'captioning' status is
+    # durable first (keeps the row out of the next poll cycle — no double-spawn).
     for video_id, raw_url, project_id, tg_chat_id in to_caption:
-        asyncio.create_task(_caption_and_finalize(video_id, raw_url, project_id, tg_chat_id))
+        asyncio.create_task(_broll_caption_and_finalize(video_id, raw_url, project_id, tg_chat_id))
 
     return touched
 

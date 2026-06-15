@@ -24,6 +24,7 @@ class FakeVideo:
         self.caption_status = kw.get("caption_status")
         self.video_url = kw.get("video_url")
         self.captioned_video_url = kw.get("captioned_video_url")
+        self.broll_video_url = kw.get("broll_video_url")
         self.thumbnail_url = kw.get("thumbnail_url")
         self.error = kw.get("error")
         self.caption_error = kw.get("caption_error")
@@ -92,6 +93,28 @@ async def test_completed_caption_failed_falls_back_to_raw():
     out = await _check(v)
     assert out["ready"] is True
     assert out["video_url"] == "https://files.heygen.ai/raw.mp4"
+
+
+@pytest.mark.asyncio
+async def test_captioned_composite_wins_over_broll_and_raw():
+    # Happy path: captions ran on the b-roll composite, so captioned_video_url is the composite.
+    v = FakeVideo(status="completed", caption_status="done",
+                  video_url="https://files.heygen.ai/raw.mp4",
+                  broll_video_url="https://s3/composite.mp4",
+                  captioned_video_url="https://drive/captioned-composite.mp4")
+    out = await _check(v)
+    assert out["video_url"] == "https://drive/captioned-composite.mp4"
+
+
+@pytest.mark.asyncio
+async def test_broll_composite_served_when_captioning_failed():
+    # b-roll succeeded but Descript failed → deliver the uncaptioned composite, not the raw.
+    v = FakeVideo(status="completed", caption_status="failed",
+                  video_url="https://files.heygen.ai/raw.mp4",
+                  broll_video_url="https://s3/composite.mp4", captioned_video_url=None)
+    out = await _check(v)
+    assert out["ready"] is True
+    assert out["video_url"] == "https://s3/composite.mp4"
 
 
 @pytest.mark.asyncio

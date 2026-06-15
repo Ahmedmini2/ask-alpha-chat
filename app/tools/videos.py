@@ -560,7 +560,7 @@ async def create_promo_video_handler(db: AsyncSession, args: dict, ctx: dict) ->
     delivery = (
         "You'll get a Telegram message with the captioned download link the moment it's ready."
         if on_telegram else
-        "It'll be ready here in about a minute — just ask \"is my video ready?\" and I'll "
+        "It'll be ready here in a couple of minutes — just ask \"is my video ready?\" and I'll "
         "post the download link right here in this chat."
     )
     video_id = result.scalar_one()
@@ -588,7 +588,7 @@ async def create_promo_video_handler(db: AsyncSession, args: dict, ctx: dict) ->
         "format": ("1920x1080 landscape (16:9)" if aspect_ratio == "16:9"
                    else "1080x1920 portrait (9:16, Reels/TikTok)"),
         "delivery_channel": "telegram" if on_telegram else "web",
-        "message": "Video generation started. Typical wait is 1–2 minutes. " + delivery,
+        "message": "Video generation started. Typical wait is 2–4 minutes. " + delivery,
     }
 
 
@@ -916,8 +916,10 @@ async def check_my_video_status_handler(db: AsyncSession, args: dict, ctx: dict)
     # Descript caption step the poller keeps status='processing' while the RAW url is already
     # populated — surfacing that as a finished link was the false-'ready' bug — so we gate the
     # URL on completion. Prefer the captioned version; fall back to the raw HeyGen video.
+    # Precedence: captioned composite (or captioned raw) → uncaptioned b-roll composite → raw.
+    # broll_video_url only wins when b-roll succeeded but captioning later failed.
     completed = v.status == "completed"
-    share_url = (v.captioned_video_url or v.video_url) if completed else None
+    share_url = (v.captioned_video_url or v.broll_video_url or v.video_url) if completed else None
     is_ready = completed and bool(share_url)
 
     result = {

@@ -1,13 +1,15 @@
 FROM python:3.13-slim
 
 # System deps: build tools for native wheels (asyncpg, pypdf occasionally), libpq for asyncpg fallback,
-# tini as init so Ctrl-C / SIGTERM signals reach our processes.
+# tini as init so Ctrl-C / SIGTERM signals reach our processes, ffmpeg for the promo-video b-roll
+# post-edit (Ken-Burns stills + concat; ffmpeg ships ffprobe too).
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         build-essential \
         libpq-dev \
         ca-certificates \
         tini \
+        ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
