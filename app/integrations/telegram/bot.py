@@ -213,6 +213,15 @@ def _format_cards(cards: list[dict]) -> str:
                 )
             else:
                 lines.append("\n📊 The comparison could not be delivered — please try again.")
+        elif kind == "market_report":
+            asof = c.get("as_of")
+            title = f"Dubai Market Report{f' — {asof}' if asof else ''}"
+            if c.get("sent_to_telegram"):
+                lines.append(f"\n📊 *{title}* sent above as a PDF.")
+            elif c.get("pdf_url"):
+                lines.append(f"\n📊 *{title} is ready.*\nDownload: {c.get('pdf_url')}")
+            else:
+                lines.append("\n📊 The market report could not be delivered — please try again.")
     return "\n".join(lines).strip()
 
 

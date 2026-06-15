@@ -117,6 +117,11 @@ async def render_comparison_pdf(context: dict, image_files: dict[str, bytes]) ->
     return await html_to_pdf(html, image_files, landscape=False)
 
 
+async def render_market_report_pdf(context: dict, image_files: dict[str, bytes]) -> bytes:
+    html = render_html("market_report.html.j2", context)
+    return await html_to_pdf(html, image_files, landscape=False)
+
+
 async def html_to_png(
     html: str,
     image_files: dict[str, bytes],

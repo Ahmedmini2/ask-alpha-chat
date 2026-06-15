@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<!-- Allegiance "Dubai Market Report" — A4 portrait, 2 pages. A data-led market snapshot:
+     Dubai price index + KPIs, top communities by Alpha conviction, top BUY picks, premium
+     communities, verdict mix. Same brand language as the comparison sheet. Headless -> PDF. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Dubai Market Report | Allegiance Real Estate</title>
+<style>
+:root{
+  --pine:#06342C;
+  --pine-soft:#0A4A3F;
+  --gold:#C1A777;
+  --gold-deep:#8F7748;
+  --ink:#16191D;
+  --slate:#5A646E;
+  --slate-soft:#98A1AA;
+  --hairline:#E5E1D8;
+  --hairline-soft:#EFECE4;
+  --paper:#FFFFFF;
+  --paper-warm:#FAF7F0;
+  --lime:#8CC63F;
+  --lime-deep:#79B23A;
+  --buy:#2E8B5A;
+  --watch:#B8860B;
+  --skip:#9A2A2A;
+  --serif-display:"Vanitas","Marcellus",Georgia,serif;
+  --serif-alt:"Marcellus",Georgia,serif;
+  --sans:"Google Sans Flex",system-ui,Arial,sans-serif;
+}
+{% if vanitas_font %}
+@font-face{ font-family:"Vanitas"; src:url("{{ static_dir }}/fonts/{{ vanitas_font }}"); font-weight:400; font-display:block; }
+{% endif %}
+@font-face{ font-family:"Marcellus"; src:url("{{ static_dir }}/fonts/Marcellus-Regular.ttf"); font-weight:400; font-display:block; }
+@font-face{ font-family:"Google Sans Flex"; src:url("{{ static_dir }}/fonts/GoogleSansFlex-Regular.ttf"); font-weight:400; font-display:block; }
+@font-face{ font-family:"Google Sans Flex"; src:url("{{ static_dir }}/fonts/GoogleSansFlex-Medium.ttf"); font-weight:500; font-display:block; }
+@font-face{ font-family:"Google Sans Flex"; src:url("{{ static_dir }}/fonts/GoogleSansFlex-SemiBold.ttf"); font-weight:600; font-display:block; }
+@font-face{ font-family:"Google Sans Flex"; src:url("{{ static_dir }}/fonts/GoogleSansFlex-Bold.ttf"); font-weight:700; font-display:block; }
+
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;background:#fff;}
+body{font-family:var(--sans);-webkit-font-smoothing:antialiased;color:var(--ink);}
+
+.sheet{
+  width:794px; height:1123px; background:var(--paper);
+  position:relative; overflow:hidden;
+  padding:40px 44px 30px; display:flex; flex-direction:column;
+}
+
+/* ---- header ---- */
+.eyebrow{ font-family:var(--sans); font-weight:600; font-size:10.5px; letter-spacing:.3em; text-transform:uppercase; color:var(--gold-deep); }
+.eyebrow .slash{ color:var(--gold); margin-right:5px; }
+.title{ font-family:var(--serif-display); font-weight:400; font-size:48px; line-height:1; letter-spacing:.04em; text-transform:uppercase; color:var(--pine); margin:9px 0 9px; }
+.title.sm{ font-size:30px; margin:7px 0 7px; }
+.sub{ font-size:12.5px; line-height:1.5; color:var(--slate); margin:0; max-width:660px; }
+.headrow{ display:flex; justify-content:space-between; align-items:flex-end; }
+.headrow .asof{ font-family:var(--sans); font-weight:600; font-size:10px; letter-spacing:.16em; text-transform:uppercase; color:var(--slate-soft); text-align:right; }
+.rule{ height:1px; background:var(--hairline); margin:16px 0 0; }
+
+/* ---- section label ---- */
+.seclabel{ font-family:var(--sans); font-weight:600; font-size:9.5px; letter-spacing:.26em; text-transform:uppercase; color:var(--slate-soft); margin:22px 0 12px; display:flex; align-items:center; gap:10px; }
+.seclabel::after{ content:""; flex:1; height:1px; background:var(--hairline-soft); }
+
+/* ---- KPI strip ---- */
+.kpis{ display:grid; grid-template-columns:repeat(4,1fr); gap:0; margin-top:18px; border:1px solid var(--hairline); border-radius:10px; overflow:hidden; }
+.kpi{ padding:16px 18px; border-left:1px solid var(--hairline); }
+.kpi:first-child{ border-left:0; }
+.kpi__label{ font-family:var(--sans); font-weight:600; font-size:9px; letter-spacing:.14em; text-transform:uppercase; color:var(--slate-soft); }
+.kpi__value{ font-family:var(--sans); font-weight:700; font-size:26px; color:var(--pine); line-height:1.05; margin:7px 0 2px; letter-spacing:-.01em; }
+.kpi__sub{ font-family:var(--sans); font-weight:400; font-size:10px; color:var(--slate); }
+
+/* ---- price index chart ---- */
+.chart{ border:1px solid var(--hairline); border-radius:10px; padding:16px 18px 12px; background:var(--paper-warm); }
+.chart__top{ display:flex; justify-content:space-between; align-items:baseline; margin-bottom:6px; }
+.chart__h{ font-family:var(--serif-alt); font-size:16px; color:var(--pine); }
+.chart__meta{ font-family:var(--sans); font-weight:600; font-size:11px; color:var(--gold-deep); }
+.chart__meta b{ color:var(--pine); }
+.chart svg{ display:block; width:100%; height:150px; }
+.chart__axis{ display:flex; justify-content:space-between; font-family:var(--sans); font-weight:500; font-size:9px; letter-spacing:.1em; text-transform:uppercase; color:var(--slate-soft); margin-top:4px; }
+
+/* ---- data tables ---- */
+.tbl{ width:100%; border-collapse:collapse; }
+.tbl th{ font-family:var(--sans); font-weight:600; font-size:9px; letter-spacing:.13em; text-transform:uppercase; color:var(--slate-soft); text-align:right; padding:0 10px 9px; border-bottom:1px solid var(--hairline); }
+.tbl th.l{ text-align:left; }
+.tbl td{ font-family:var(--sans); font-weight:500; font-size:13px; color:var(--ink); text-align:right; padding:11px 10px; border-bottom:1px solid var(--hairline-soft); }
+.tbl td.l{ text-align:left; }
+.tbl tr:last-child td{ border-bottom:0; }
+.tbl .rank{ font-family:var(--sans); font-weight:700; font-size:12px; color:var(--gold-deep); width:24px; }
+.tbl .name{ font-family:var(--serif-alt); font-size:14.5px; color:var(--pine); }
+.tbl .muted{ color:var(--slate); font-size:11.5px; }
+.conv{ display:inline-flex; align-items:baseline; gap:1px; font-weight:700; color:var(--pine); }
+.conv small{ font-weight:600; font-size:9px; color:var(--slate-soft); }
+.pill{ font-family:var(--sans); font-weight:700; font-size:8px; letter-spacing:.08em; text-transform:uppercase; color:#fff; padding:3px 7px 2px; border-radius:999px; }
+.pill.buy{ background:var(--buy); }
+.pill.watch{ background:var(--watch); }
+.pill.skip{ background:var(--skip); }
+
+/* ---- two-column bottom (premium + verdict mix) ---- */
+.cols{ display:grid; grid-template-columns:1fr 1fr; gap:26px; margin-top:6px; }
+.prem__row{ display:flex; justify-content:space-between; align-items:center; padding:9px 2px; border-bottom:1px solid var(--hairline-soft); }
+.prem__row:last-child{ border-bottom:0; }
+.prem__name{ font-family:var(--serif-alt); font-size:13.5px; color:var(--pine); }
+.prem__val{ font-family:var(--sans); font-weight:600; font-size:13px; color:var(--ink); }
+
+.mix__bar{ display:flex; height:30px; border-radius:6px; overflow:hidden; margin:4px 0 12px; }
+.mix__seg{ display:flex; align-items:center; justify-content:center; font-family:var(--sans); font-weight:700; font-size:11px; color:#fff; }
+.mix__seg.buy{ background:var(--buy); }
+.mix__seg.watch{ background:var(--watch); }
+.mix__seg.skip{ background:var(--skip); }
+.mix__legend{ display:flex; gap:16px; }
+.mix__leg{ display:flex; align-items:center; gap:6px; font-family:var(--sans); font-weight:500; font-size:10.5px; color:var(--slate); }
+.dot{ width:9px; height:9px; border-radius:2px; }
+.dot.buy{ background:var(--buy); } .dot.watch{ background:var(--watch); } .dot.skip{ background:var(--skip); }
+
+/* ---- basis + footer ---- */
+.spacer{ flex:1; }
+.basis{ font-family:var(--sans); font-weight:400; font-size:9px; line-height:1.5; color:var(--slate-soft); margin-top:16px; }
+.foot{ margin-top:14px; display:flex; flex-direction:column; align-items:center; gap:7px; }
+.foot img{ height:42px; width:auto; display:block; }
+.foot .cities{ font-family:var(--sans); font-weight:500; font-size:8.5px; letter-spacing:.24em; text-transform:uppercase; color:var(--slate-soft); white-space:nowrap; }
+
+@media print{
+  @page{ size:A4 portrait; margin:0; }
+  html,body{ background:#fff; }
+  .sheet{ box-shadow:none; page-break-after:always; break-after:page; }
+  .sheet:last-child{ page-break-after:auto; break-after:auto; }
+}
+</style>
+</head>
+<body>
+
+<!-- ============================= PAGE 1 ============================= -->
+<section class="sheet">
+
+  <div class="headrow">
+    <div>
+      <div class="eyebrow"><span class="slash">//</span> Market Intelligence</div>
+      <h1 class="title">Dubai Market Report</h1>
+    </div>
+    <div class="asof">As of<br>{{ as_of }}</div>
+  </div>
+  <p class="sub">{{ subtitle }}</p>
+  <div class="rule"></div>
+
+  <!-- KPI strip -->
+  <div class="kpis">
+    {% for k in kpis %}
+    <div class="kpi">
+      <div class="kpi__label">{{ k.label }}</div>
+      <div class="kpi__value">{{ k.value }}</div>
+      <div class="kpi__sub">{{ k.sub }}</div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <!-- Dubai price index -->
+  {% if chart.points %}
+  <div class="seclabel">Dubai Price Index</div>
+  <div class="chart">
+    <div class="chart__top">
+      <div class="chart__h">Residential price index · base 100 = {{ index.start_label }}</div>
+      <div class="chart__meta">
+        {% if chart.growth %}<b>{{ chart.growth }}</b> since {{ index.start_label }} &nbsp;·&nbsp; {% endif %}
+        MoM {{ chart.mom }} &nbsp;·&nbsp; QoQ {{ chart.qoq }}
+      </div>
+    </div>
+    <svg viewBox="0 0 {{ chart.w }} {{ chart.h }}" preserveAspectRatio="none">
+      <defs>
+        <linearGradient id="fill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#C1A777" stop-opacity="0.28"/>
+          <stop offset="100%" stop-color="#C1A777" stop-opacity="0.02"/>
+        </linearGradient>
+      </defs>
+      <polygon points="{{ chart.area }}" fill="url(#fill)"/>
+      <polyline points="{{ chart.points }}" fill="none" stroke="#06342C" stroke-width="2"
+                stroke-linejoin="round" stroke-linecap="round"/>
+    </svg>
+    <div class="chart__axis"><span>{{ index.start_label }}</span><span>{{ index.end_label }}</span></div>
+  </div>
+  {% endif %}
+
+  <!-- Top communities by conviction -->
+  {% if communities %}
+  <div class="seclabel">Top Communities · by Alpha Conviction</div>
+  <table class="tbl">
+    <thead>
+      <tr>
+        <th class="l">#</th><th class="l">Community</th>
+        <th>Conviction</th><th>Net Yield</th><th>Avg Price/sqft</th><th>BUY-rated</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for c in communities %}
+      <tr>
+        <td class="l rank">{{ c.rank }}</td>
+        <td class="l name">{{ c.name }}</td>
+        <td><span class="conv">{{ c.conviction }}<small>/100</small></span></td>
+        <td>{{ c.yield_disp }}</td>
+        <td>{{ c.ppsf_disp }}</td>
+        <td class="muted">{{ c.buys }} / {{ c.n }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  <div class="spacer"></div>
+  <div class="foot">
+    <img src="{{ static_dir }}/allegiance-green.png" alt="Allegiance Real Estate">
+    <div class="cities">Dubai · Sydney · Riyadh · Paris · Beirut · Tokyo · Ljubljana</div>
+  </div>
+</section>
+
+<!-- ============================= PAGE 2 ============================= -->
+<section class="sheet">
+
+  <div class="headrow">
+    <div>
+      <div class="eyebrow"><span class="slash">//</span> Market Intelligence</div>
+      <h1 class="title sm">Alpha's Top Picks</h1>
+    </div>
+    <div class="asof">Dubai<br>{{ as_of }}</div>
+  </div>
+  <p class="sub">The highest-conviction BUY-rated projects across Dubai right now, scored on yield,
+     price vs community, growth thesis and risk.</p>
+  <div class="rule"></div>
+
+  {% if picks %}
+  <table class="tbl" style="margin-top:18px;">
+    <thead>
+      <tr>
+        <th class="l">#</th><th class="l">Project</th><th class="l">Community</th>
+        <th>Verdict</th><th>Conviction</th><th>Net Yield</th><th>From</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in picks %}
+      <tr>
+        <td class="l rank">{{ p.rank }}</td>
+        <td class="l name">{{ p.name }}</td>
+        <td class="l muted">{{ p.community }}</td>
+        <td><span class="pill buy">{{ p.verdict }}</span></td>
+        <td><span class="conv">{{ p.conviction }}<small>/100</small></span></td>
+        <td>{{ p.yield_disp }}</td>
+        <td>{{ p.price_disp }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  <div class="cols">
+    <div>
+      {% if premium %}
+      <div class="seclabel">Most Premium · Price/sqft</div>
+      {% for p in premium %}
+      <div class="prem__row">
+        <span class="prem__name">{{ p.name }}</span>
+        <span class="prem__val">{{ p.ppsf_disp }}</span>
+      </div>
+      {% endfor %}
+      {% endif %}
+    </div>
+    <div>
+      {% if distribution.total %}
+      <div class="seclabel">Verdict Mix · {{ distribution.total }} projects</div>
+      <div class="mix__bar">
+        {% if distribution.buy_pct %}<div class="mix__seg buy" style="width:{{ distribution.buy_pct }}%">{% if distribution.buy_pct >= 6 %}{{ distribution.buy_pct }}%{% endif %}</div>{% endif %}
+        {% if distribution.watch_pct %}<div class="mix__seg watch" style="width:{{ distribution.watch_pct }}%">{% if distribution.watch_pct >= 6 %}{{ distribution.watch_pct }}%{% endif %}</div>{% endif %}
+        {% if distribution.skip_pct %}<div class="mix__seg skip" style="width:{{ distribution.skip_pct }}%">{% if distribution.skip_pct >= 6 %}{{ distribution.skip_pct }}%{% endif %}</div>{% endif %}
+      </div>
+      <div class="mix__legend">
+        <span class="mix__leg"><span class="dot buy"></span>BUY · {{ distribution.buy }}</span>
+        <span class="mix__leg"><span class="dot watch"></span>WATCH · {{ distribution.watch }}</span>
+        <span class="mix__leg"><span class="dot skip"></span>SKIP · {{ distribution.skip }}</span>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="spacer"></div>
+  <p class="basis">{{ basis }}</p>
+  <div class="foot">
+    <img src="{{ static_dir }}/allegiance-green.png" alt="Allegiance Real Estate">
+    <div class="cities">Dubai · Sydney · Riyadh · Paris · Beirut · Tokyo · Ljubljana</div>
+  </div>
+</section>
+
+<script>
+  // No map/network assets on this report — signal ready immediately.
+  window.__MAP_READY__ = true;
+</script>
+</body>
+</html>

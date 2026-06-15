@@ -26,6 +26,7 @@ import app.tools.documents   # noqa: F401
 import app.tools.videos      # noqa: F401
 import app.tools.brochures   # noqa: F401
 import app.tools.comparison  # noqa: F401
+import app.tools.market_report  # noqa: F401
 import app.tools.flyers      # noqa: F401
 
 log = logging.getLogger("askalpha.orchestrator")
@@ -310,6 +311,15 @@ states an appreciation figure — when they do ("assume 7% appreciation", "X yie
 that project's per-property fields. NEVER invent yields, appreciation, or scores.
     * For a quick in-chat numeric comparison without a document (or for non-agents), use \
 compare_projects instead, which returns the figures as data to summarise in your reply.
+- DUBAI MARKET REPORT PDF: when the user asks for a "Dubai market report", "market report PDF", \
+"market overview/report", "state of the market" or a general market PDF (NOT tied to one project), \
+use generate_market_report. It takes no arguments and builds a branded 2-page A4 report from real \
+data — the Dubai price index, KPIs (avg price/sqft, YoY appreciation), the top communities by Alpha \
+conviction, the highest-conviction BUY projects, the most premium communities and the verdict mix. \
+The call is synchronous (~20–40s); after it returns, tell them the report is ready, but do NOT paste \
+the download URL yourself (the system attaches the exact link). On Telegram the PDF is also pushed \
+into the chat (sent_to_telegram). This is generic market intel, so it's available to any signed-in \
+user; for a single project's numbers use get_alpha_verdict/get_investment_metrics instead.
 - WHATSAPP FLYER / SHAREABLE IMAGE: when an agent asks for a "WhatsApp flyer", "flyer", \
 "social image/post", or "an image/PNG of the key facts" or "of the investment insights" for a \
 project, use generate_whatsapp_flyer (agents only — anonymous users must sign in). It produces \
@@ -459,6 +469,9 @@ def _summarize_tool_result(name: str, result: dict) -> str:
                 f"telegram={result.get('sent_to_telegram')} url?={bool(result.get('pdf_url'))}")
     if name == "generate_comparison_pdf":
         return (f"projects={result.get('project_ids')} status={result.get('status')} "
+                f"telegram={result.get('sent_to_telegram')} url?={bool(result.get('pdf_url'))}")
+    if name == "generate_market_report":
+        return (f"status={result.get('status')} communities={result.get('communities')} "
                 f"telegram={result.get('sent_to_telegram')} url?={bool(result.get('pdf_url'))}")
     if name == "generate_whatsapp_flyer":
         return (f"project={result.get('project_id')} type={result.get('flyer_type')} "
@@ -612,6 +625,16 @@ def _build_cards(tool_calls: list[dict]) -> list[dict]:
                 "filename": result.get("filename"),
                 "sent_to_telegram": result.get("sent_to_telegram"),
             })
+        elif name == "generate_market_report":
+            cards.append({
+                "type": "market_report",
+                "status": result.get("status"),
+                "title": result.get("title"),
+                "as_of": result.get("as_of"),
+                "pdf_url": result.get("pdf_url"),
+                "filename": result.get("filename"),
+                "sent_to_telegram": result.get("sent_to_telegram"),
+            })
         elif name == "generate_whatsapp_flyer":
             cards.append({
                 "type": "flyer",
@@ -732,6 +755,7 @@ _FILE_DOWNLOADS: dict[str, tuple[str, str]] = {
     "generate_whatsapp_flyer": ("image_url", "📸 Download flyer"),
     "generate_mini_brochure": ("pdf_url", "📄 Download brochure"),
     "generate_comparison_pdf": ("pdf_url", "📄 Download comparison"),
+    "generate_market_report": ("pdf_url", "📊 Download market report"),
     "export_inventory_excel": ("xlsx_url", "📊 Download (Excel)"),
     "check_my_video_status": ("video_url", "🎬 Download video"),
 }
