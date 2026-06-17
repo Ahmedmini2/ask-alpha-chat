@@ -140,9 +140,13 @@ async def _post_json(path: str, profile_key: str, body: dict) -> dict:
     return data
 
 
+_ENVELOPE_KEYS = {"status", "id", "lastUpdated", "nextUpdate", "code", "platform", "platforms"}
+
+
 def _items(data, *keys: str) -> list:
     """Pull a list out of an Ayrshare response that may be a bare array or a dict keyed by any of
-    `keys` (response shapes vary across endpoints)."""
+    `keys` (response shapes vary across endpoints — some are flat like {"posts": [...]}, others are
+    keyed by platform like {"instagram": [...]})."""
     if isinstance(data, list):
         return data
     if isinstance(data, dict):
@@ -150,6 +154,11 @@ def _items(data, *keys: str) -> list:
             v = data.get(k)
             if isinstance(v, list):
                 return v
+        # No expected key held a list. If the dict still carries payload beyond envelope metadata,
+        # the shape isn't what we assumed — log it so a silent [] is observable, not invisible.
+        payload = [k for k in data if k not in _ENVELOPE_KEYS]
+        if payload:
+            log.debug("ayrshare response had no list under %s; other keys present=%s", keys, payload)
     return []
 
 
@@ -172,10 +181,12 @@ async def get_account_analytics(profile_key: str, platforms: list[str]) -> dict:
 
 
 async def get_comments(profile_key: str, post_id: str, platform: str) -> list[dict]:
-    """Comments on a post (native post id via searchPlatformId)."""
+    """Comments on a post (native post id via searchPlatformId). Ayrshare nests the comments under
+    the PLATFORM key (e.g. data["instagram"]); `platform` is already normalized ('twitter', not
+    'x') to match. Fall back to a flat "comments" key for safety."""
     data = await _get_json(f"/comments/{post_id}", profile_key,
                            {"searchPlatformId": "true", "platform": platform})
-    return _items(data, "comments")
+    return _items(data, platform, "comments")
 
 
 async def get_messages(profile_key: str, platform: str, conversation_id: Optional[str] = None) -> list[dict]:

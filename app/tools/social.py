@@ -351,6 +351,8 @@ async def list_posts_handler(db: AsyncSession, args: dict, ctx: dict) -> dict:
     except Exception as e:
         log.warning("list_posts %s failed: %s", platform, e)
         return {"status": "error", "platform": platform, "message": f"Couldn't read your {platform} posts: {e}"}
+    if len(posts) > _READ_CAP:
+        log.info("list_posts %s: %d posts, capped to %d", platform, len(posts), _READ_CAP)
     return {"status": "ok", "platform": platform, "count": len(posts), "posts": posts[:_READ_CAP]}
 
 
@@ -398,6 +400,8 @@ async def get_comments_handler(db: AsyncSession, args: dict, ctx: dict) -> dict:
     except Exception as e:
         log.warning("get_comments %s failed: %s", platform, e)
         return {"status": "error", "platform": platform, "message": f"Couldn't read comments on that post: {e}"}
+    if len(comments) > _READ_CAP:
+        log.info("get_comments %s: %d comments, capped to %d", platform, len(comments), _READ_CAP)
     return {"status": "ok", "platform": platform, "post_id": post_id,
             "count": len(comments), "comments": comments[:_READ_CAP]}
 
@@ -416,6 +420,8 @@ async def get_messages_handler(db: AsyncSession, args: dict, ctx: dict) -> dict:
     except Exception as e:
         log.warning("get_messages %s failed: %s", platform, e)
         return {"status": "error", "platform": platform, "message": f"Couldn't read your {platform} messages: {e}"}
+    if len(messages) > _READ_CAP:
+        log.info("get_messages %s: %d messages, capped to %d", platform, len(messages), _READ_CAP)
     return {"status": "ok", "platform": platform, "conversation_id": conversation_id,
             "count": len(messages), "messages": messages[:_READ_CAP],
             "note": "sender/recipient are platform user IDs, not usernames"}

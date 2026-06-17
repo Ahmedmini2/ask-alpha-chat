@@ -6,7 +6,9 @@ import uuid
 
 import pytest
 
+import app.integrations.ayrshare as ayr
 import app.tools.social as social
+from app.integrations.ayrshare import _items
 from app.tools.social import (
     _norm_platform,
     get_social_permission,
@@ -16,6 +18,40 @@ from app.tools.social import (
     reply_to_comment_handler,
     send_dm_handler,
 )
+
+
+# ----------------------------- _items / comments parsing -----------------------------
+
+def test_items_bare_list():
+    assert _items([1, 2, 3], "posts") == [1, 2, 3]
+
+
+def test_items_flat_key():
+    assert _items({"posts": [{"id": 1}], "status": "success"}, "posts", "history") == [{"id": 1}]
+
+
+def test_items_platform_keyed():
+    # /comments nests the array under the platform key, not a "comments" key
+    body = {"instagram": [{"commentId": "c1", "comment": "love it"}], "status": "success", "id": "p1"}
+    assert _items(body, "instagram", "comments") == [{"commentId": "c1", "comment": "love it"}]
+
+
+def test_items_returns_empty_when_no_match():
+    assert _items({"status": "success", "id": "p1"}, "comments") == []
+
+
+@pytest.mark.asyncio
+async def test_get_comments_parses_platform_keyed_body(monkeypatch):
+    # regression for the bug where get_comments always returned [] (looked for a "comments" key
+    # that doesn't exist — comments live under the platform key)
+    async def fake_get_json(path, pk, params=None):
+        assert path == "/comments/POST123"
+        assert params == {"searchPlatformId": "true", "platform": "instagram"}
+        return {"instagram": [{"commentId": "c1", "comment": "🔥"}], "status": "success"}
+
+    monkeypatch.setattr(ayr, "_get_json", fake_get_json)
+    out = await ayr.get_comments("pk_1", "POST123", "instagram")
+    assert out == [{"commentId": "c1", "comment": "🔥"}]
 
 
 # --------------------------------- _norm_platform ---------------------------------
