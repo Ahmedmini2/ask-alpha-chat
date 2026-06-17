@@ -191,6 +191,33 @@ class MessagingLink(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class AyrshareProfile(Base):
+    """One row per user that has connected social accounts via the web app. Maps the Supabase
+    auth user id (== profiles.id) to their secret Ayrshare Profile-Key. RLS is on with FORCE
+    and no policies, but our backend connects as the `postgres` role (BYPASSRLS), so we read it
+    directly like every other table. Written by the web app; the backend only reads it."""
+    __tablename__ = "ayrshare_profiles"
+
+    user_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    profile_key: Mapped[str] = mapped_column(Text, nullable=False)
+    ref_id: Mapped[Optional[str]] = mapped_column(Text)
+    title: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class AskAlphaSettings(Base):
+    """Per-user Ask Alpha preferences, written by the web app's Settings UI. Currently just the
+    social-action approval mode ('auto' | 'ask' | 'deny', default 'ask'): whether Alpha may post /
+    reply / DM immediately, must confirm first, or is blocked. RLS-on with no policies, read here
+    via the BYPASSRLS `postgres` role. The backend only reads it."""
+    __tablename__ = "ask_alpha_settings"
+
+    user_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    social_tool_permission: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class Video(Base):
     __tablename__ = "videos"
 

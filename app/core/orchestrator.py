@@ -28,6 +28,7 @@ import app.tools.brochures   # noqa: F401
 import app.tools.comparison  # noqa: F401
 import app.tools.market_report  # noqa: F401
 import app.tools.flyers      # noqa: F401
+import app.tools.social      # noqa: F401
 
 log = logging.getLogger("askalpha.orchestrator")
 
@@ -338,6 +339,34 @@ signed links break if you retype them). On Telegram the image is also sent into 
 auto-filled from our area model; when the agent states their own numbers ("use 6% yield"), pass \
 them as the matching override arguments. NEVER invent override values. If the agent doesn't say \
 which variant they want, make the 'key_facts' one and mention you can also do the investment-insights image.
+- SOCIAL MEDIA AGENT: you manage the user's OWN connected social accounts. You can READ their \
+posts and analytics, READ comments and DMs, and (subject to their approval setting) ACT by \
+publishing posts, replying to comments, and sending DMs. Only touch social tools when the user's \
+request is about THEIR social media; never on your own initiative.
+    READ tools (always run, no approval): list_posts (their real posts on a network, newest \
+first, with likes/comment counts), get_post_analytics (impressions/reach/saves/views for one \
+post), get_account_analytics (followers/impressions), get_comments (comments on a post), \
+get_messages (DMs on Instagram/Facebook/X). To answer "how is my latest post doing", call \
+list_posts for that network, take the newest, then get_post_analytics AND get_comments for it, \
+and give a concise honest read — reach/impressions/views, engagement, what's working, the \
+comments' sentiment, and one or two concrete suggestions. NEVER fabricate a metric: only quote \
+numbers a tool returned; if a field isn't there, say so. Comment/DM authors come back as numeric \
+platform IDs, not usernames — never invent a name.
+    ACTION tools (publish_to_social, reply_to_comment, send_dm) obey the user's approval setting, \
+enforced by the tool itself — you do NOT decide whether to ask. Call the tool when the user asks \
+for the action, then go by the result's `status`: if 'pending_confirmation', the post/reply/DM \
+has NOT been sent — show the user the EXACT draft (caption + platforms, or the reply text, or the \
+message + recipient) and ask them to reply 'yes'; once they clearly say yes, call the SAME tool \
+again with confirmed=true (and the same arguments). If 'denied', tell them social actions are \
+turned off and they can change it under Dashboard → Settings. On success ('published', \
+'scheduled', 'replied', 'sent') relay it plainly from the returned `message`, including any post \
+link. If 'not_connected', point them to Connectors. NEVER claim something was posted, replied, or \
+sent unless the tool returned a success status THIS turn — 'pending_confirmation' is NOT done.
+    For publishing: pass the caption and target network(s); attach a generated video/image as \
+media_url (set is_video true for a video link that doesn't end in .mp4); schedule with \
+schedule_date (ISO-8601 UTC). Instagram, TikTok, YouTube and Pinterest require media — a \
+text-only post to those is rejected, so attach media or use a text-friendly network (Facebook, \
+LinkedIn, X). Set confirmed=true ONLY after the user has explicitly approved that exact action.
 """
 
 MAX_TOOL_ITERATIONS = 10  # higher than 5 to accommodate bulk video requests
@@ -523,6 +552,17 @@ def _summarize_tool_result(name: str, result: dict) -> str:
         return (f"project={result.get('project_id')} type={result.get('flyer_type')} "
                 f"status={result.get('status')} telegram={result.get('sent_to_telegram')} "
                 f"url?={bool(result.get('image_url'))}")
+    if name == "publish_to_social":
+        return (f"social status={result.get('status')} platforms={result.get('platforms')} "
+                f"scheduled={result.get('scheduled')} urls={len(result.get('post_urls') or [])} "
+                f"errors={len(result.get('errors') or [])}")
+    if name in ("list_posts", "get_comments", "get_messages"):
+        return (f"{name} platform={result.get('platform')!r} status={result.get('status')} "
+                f"count={result.get('count')}")
+    if name in ("get_post_analytics", "get_account_analytics"):
+        return f"{name} status={result.get('status')} platform(s)={result.get('platform') or result.get('platforms')}"
+    if name in ("reply_to_comment", "send_dm"):
+        return f"{name} status={result.get('status')} platform={result.get('platform')!r}"
     return repr(result)[:120]
 
 

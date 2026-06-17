@@ -121,6 +121,21 @@ class Settings(BaseSettings):
     # Telegram bot
     telegram_bot_token: str = ""
 
+    # Supabase project URL, e.g. https://<ref>.supabase.co. When SET, /v1/chat authenticates
+    # the caller: it verifies the Supabase access token (Authorization: Bearer …) against the
+    # project's public JWKS and derives user_id from the token's `sub` — a client-supplied body
+    # user_id is then NOT trusted on its own (it must match the token, or the request is treated
+    # as anonymous). When UNSET, auth is disabled and the legacy body user_id is trusted (dev /
+    # pre-rollout). See app/core/auth.py.
+    supabase_url: str = ""
+
+    # Ayrshare — publish to a user's connected social accounts from chat (publish_to_social).
+    # This is the ONE shared "Primary Profile" API key (same value the web app uses); each
+    # user's per-account Profile-Key is read straight from public.ayrshare_profiles on our
+    # Postgres connection (the `postgres` role has BYPASSRLS, so no Supabase service-role REST
+    # call is needed). Unset → the tool returns a "not configured" message instead of posting.
+    ayrshare_api_key: str = ""
+
     # Comma-separated list of allowed CORS origins. Default "*" for dev; tighten in prod via env.
     cors_origins: str = "*"
 

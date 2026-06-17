@@ -17,3 +17,6 @@ Pillow>=10.0.0
 # .xlsx inventory exports (app/tools/inventory_export).
 openpyxl>=3.1.0
 h2>=4.0.0
+# Verify Supabase user JWTs on /v1/chat (asymmetric ES256/RS256 via the project JWKS).
+# The [crypto] extra pulls in `cryptography` for ECDSA/RSA signature verification.
+pyjwt[crypto]>=2.9.0
