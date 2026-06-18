@@ -193,6 +193,139 @@ async def list_looks_for(agent_name: str) -> list[dict]:
     return _dedupe_look_names(looks)
 
 
+def _match_own_group(groups: list[dict], identity_names: set[str]) -> Optional[dict]:
+    """Pick the avatar group belonging to the SIGNED-IN user — SAFELY. Unlike _match_group (a
+    free-text search that matches on a shared first-name token or substring), this is used as a
+    security identity resolver, so it never matches on a first name alone.
+
+    A group qualifies only when its name is token-compatible with one of the user's own identity
+    names: an exact (normalized) match, or — for a multi-token identity (e.g. 'Zain Ul Abdeen') —
+    a token-subset relationship (the identity's tokens are all in the group's, or vice-versa). That
+    keeps 'Zain Ul Abdeen' → 'Zain Ul Abdeen'/'Zain Ul Abdeen Official' working while REJECTING
+    'Ahmed Othman' → 'Ahmed Khan' (no token-subset) and any single-token first-name collision. On
+    ambiguity (more than one distinct group qualifies) it returns None rather than guess."""
+    names = {_normalize_name(n) for n in identity_names}
+    names.discard("")
+    if not names:
+        return None
+
+    # 1) exact name equality — the common, unambiguous case (real agents store their full name).
+    exact = [g for g in groups if _normalize_name(g.get("name", "")) in names]
+    if exact:
+        return max(exact, key=lambda g: g.get("num_looks") or 0)
+
+    # 2) multi-token subset match, accepted ONLY when it resolves to a single group. A single-token
+    #    identity ('Ahmed') is never allowed to subset-match a fuller group name (too collision-prone).
+    multi = {n for n in names if len(n.split()) >= 2}
+    cands: dict = {}
+    for g in groups:
+        gtok = set(_normalize_name(g.get("name", "")).split())
+        if not gtok:
+            continue
+        for n in multi:
+            ntok = set(n.split())
+            if ntok <= gtok or gtok <= ntok:
+                cands[id(g)] = g
+                break
+    uniq = list(cands.values())
+    return uniq[0] if len(uniq) == 1 else None
+
+
+async def list_looks_for_self(identity_names: set[str], person: str) -> list[dict]:
+    """Looks for the SIGNED-IN user's OWN avatar, resolved by a SAFE name match (see _match_own_group)
+    against the account's avatar groups, then flat standard avatars. This is the legacy fallback used
+    only when the user has no connected `heygen_avatars` row; it never matches a different person who
+    merely shares a first name. `identity_names` are the caller's own names (full name, email-local,
+    etc.); `person` is the display label used for friendly look names."""
+    names = {n for n in identity_names if n and n.strip()}
+    if not names:
+        return []
+    looks: list[dict] = []
+    try:
+        group = _match_own_group(await list_avatar_groups(), names)
+        if group and group.get("id"):
+            for raw in await list_group_looks(group["id"]):
+                norm = _normalize_look(raw, person)
+                if norm and norm["avatar_id"] not in {l["avatar_id"] for l in looks}:
+                    looks.append(norm)
+    except HeyGenError:
+        looks = []  # fall back to the flat avatar below
+
+    if not looks:
+        # No group: use a flat standard avatar, matched EXACTLY (no first-token guessing).
+        norm_names = {_normalize_name(n) for n in names}
+        for a in await list_avatars():
+            if _normalize_name(a.get("avatar_name", "")) in norm_names:
+                looks = [{
+                    "avatar_id": a["avatar_id"],
+                    "look_name": _friendly_look_name(a.get("avatar_name"), person),
+                    "preview_url": a.get("preview_image_url"),
+                    "is_photo": False,
+                    "default_voice_id": a.get("default_voice_id") or a.get("voice_id") or None,
+                }]
+                break
+    return _dedupe_look_names(looks)
+
+
+async def looks_for_connected_avatar(
+    group_id: Optional[str],
+    avatar_id: Optional[str],
+    preview_url: Optional[str],
+    person: str,
+) -> list[dict]:
+    """All selectable looks for a user's OWN connected avatar (a `heygen_avatars` row).
+
+    Unlike list_looks_for(), this never name-matches across the account — it reads ONLY the
+    given avatar group, so the result is provably locked to this person's avatar. The known
+    `avatar_id` is guaranteed to appear as a look even if the group API returns nothing (e.g. a
+    freshly-created instant/photo twin that hasn't surfaced in avatar_group/{id}/avatars yet).
+    """
+    looks: list[dict] = []
+    if group_id:
+        try:
+            for raw in await list_group_looks(group_id):
+                norm = _normalize_look(raw, person)
+                if norm and norm["avatar_id"] not in {l["avatar_id"] for l in looks}:
+                    looks.append(norm)
+        except HeyGenError:
+            looks = []  # fall back to the bare avatar_id below
+    if avatar_id and avatar_id not in {l["avatar_id"] for l in looks}:
+        # Digital twins from a recorded video are photo (talking_photo) avatars; is_photo=True
+        # makes generate_video try the talking_photo shape first and fall back to the avatar
+        # shape, so this works whichever kind HeyGen actually created.
+        looks.insert(0, {
+            "avatar_id": avatar_id,
+            "look_name": _friendly_look_name(person, person),  # -> "Original"
+            "preview_url": preview_url,
+            "is_photo": True,
+            "default_voice_id": None,
+        })
+    return _dedupe_look_names(looks)
+
+
+def find_look_in(looks: list[dict], look_query: str) -> Optional[dict]:
+    """Resolve a typed look name against an ALREADY-resolved look list (so the caller stays in
+    control of which avatar the looks came from). Exact (case-insensitive), then substring, then
+    token overlap — same precedence as find_look()."""
+    q = _normalize_name(look_query)
+    if not q or not looks:
+        return None
+    for lk in looks:
+        if _normalize_name(lk["look_name"]) == q:
+            return lk
+    for lk in looks:
+        ln = _normalize_name(lk["look_name"])
+        if q in ln or ln in q:
+            return lk
+    qtok = set(q.split())
+    best, best_overlap = None, 0
+    for lk in looks:
+        overlap = len(qtok & set(_normalize_name(lk["look_name"]).split()))
+        if overlap > best_overlap:
+            best, best_overlap = lk, overlap
+    return best
+
+
 async def find_look(agent_name: str, look_query: str) -> Optional[dict]:
     """Resolve a typed look name back to a concrete look. Exact (case-insensitive)
     first, then substring, then token overlap."""

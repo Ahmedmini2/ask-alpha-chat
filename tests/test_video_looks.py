@@ -1,10 +1,16 @@
 """Unit tests for the avatar-look helpers (pure functions only — the HeyGen network
 paths are exercised by a dev-time inspection script)."""
+import pytest
+
+from app.integrations import heygen
 from app.integrations.heygen import (
     _dedupe_look_names,
     _friendly_look_name,
     _match_group,
+    _match_own_group,
     _normalize_look,
+    find_look_in,
+    looks_for_connected_avatar,
 )
 
 
@@ -64,6 +70,7 @@ def test_normalize_look_photo_shape():
         "look_name": "Dubai Executive",
         "preview_url": "https://x/y.webp",
         "is_photo": True,
+        "default_voice_id": None,
     }
 
 
@@ -98,3 +105,123 @@ def test_dedupe_look_names():
         "Zain in his studio space (2)",
         "Zain in his studio space (3)",
     ]
+
+
+# ---------------------------- find_look_in (pure) ----------------------------
+
+def _looks():
+    return [
+        {"look_name": "Original", "avatar_id": "a0"},
+        {"look_name": "Dubai Executive", "avatar_id": "a1"},
+        {"look_name": "The Golf Concierge", "avatar_id": "a2"},
+    ]
+
+
+def test_find_look_in_exact_then_substring_then_overlap():
+    assert find_look_in(_looks(), "dubai executive")["avatar_id"] == "a1"   # exact (ci)
+    assert find_look_in(_looks(), "golf")["avatar_id"] == "a2"              # substring
+    assert find_look_in(_looks(), "executive dubai")["avatar_id"] == "a1"   # token overlap
+    assert find_look_in(_looks(), "") is None
+    assert find_look_in([], "anything") is None
+
+
+# -------------------- looks_for_connected_avatar (locked to one group) --------------------
+
+@pytest.mark.asyncio
+async def test_connected_avatar_synthesizes_from_avatar_id_when_group_empty(monkeypatch):
+    async def fake_group_looks(_gid):
+        return []
+    monkeypatch.setattr(heygen, "list_group_looks", fake_group_looks)
+    looks = await looks_for_connected_avatar("g1", "av1", "https://x/p.png", "ahmed othman")
+    assert len(looks) == 1
+    assert looks[0]["avatar_id"] == "av1"
+    assert looks[0]["look_name"] == "Original"   # name == person -> Original
+    assert looks[0]["is_photo"] is True          # twins are talking-photo avatars
+    assert looks[0]["preview_url"] == "https://x/p.png"
+
+
+@pytest.mark.asyncio
+async def test_connected_avatar_synthesizes_even_when_group_api_errors(monkeypatch):
+    async def boom(_gid):
+        raise heygen.HeyGenError("group looks failed 500")
+    monkeypatch.setattr(heygen, "list_group_looks", boom)
+    looks = await looks_for_connected_avatar("g1", "av1", None, "ahmed othman")
+    assert [l["avatar_id"] for l in looks] == ["av1"]
+
+
+@pytest.mark.asyncio
+async def test_connected_avatar_lists_group_looks_and_dedupes_primary(monkeypatch):
+    # The group returns two looks, one of which IS the known avatar_id — it must appear once.
+    async def fake_group_looks(_gid):
+        return [
+            {"avatar_id": "av1", "avatar_name": "Original", "preview_image_url": "https://x/0.png"},
+            {"id": "av2", "name": "Dubai Executive", "image_url": "https://x/1.webp", "status": "completed"},
+        ]
+    monkeypatch.setattr(heygen, "list_group_looks", fake_group_looks)
+    looks = await looks_for_connected_avatar("g1", "av1", None, "ahmed othman")
+    ids = [l["avatar_id"] for l in looks]
+    assert ids.count("av1") == 1          # primary not duplicated
+    assert set(ids) == {"av1", "av2"}
+    assert any(l["look_name"] == "Dubai Executive" for l in looks)
+
+
+# ---------------- _match_own_group (SAFE self-identity resolver — security) ----------------
+
+def _groups():
+    return [
+        {"id": "g1", "name": "Zain Ul Abdeen", "num_looks": 21},
+        {"id": "g2", "name": "Ahmed Khan", "num_looks": 5},
+        {"id": "g3", "name": "Ramy Nabil", "num_looks": 1},
+    ]
+
+
+def test_match_own_group_exact_full_name():
+    assert _match_own_group(_groups(), {"Zain Ul Abdeen"})["id"] == "g1"
+    assert _match_own_group(_groups(), {"ramy nabil"})["id"] == "g3"   # case-insensitive
+
+
+def test_match_own_group_rejects_same_first_name_collision():
+    # THE bug the review caught: 'Ahmed Othman' (no group of his own) must NOT resolve to 'Ahmed
+    # Khan' just because they share the first name. Old _match_group would have matched g2.
+    assert _match_own_group(_groups(), {"Ahmed Othman", "ahmed.othman"}) is None
+    # and _match_group (the unsafe free-text matcher) indeed WOULD have matched it — proving the
+    # new resolver is strictly safer:
+    assert _match_group(_groups(), "Ahmed Othman")["id"] == "g2"
+
+
+def test_match_own_group_never_single_token_matches_a_fuller_group():
+    # a bare first name must not subset-match a full-name group
+    assert _match_own_group(_groups(), {"Ahmed"}) is None
+    assert _match_own_group(_groups(), {"Zain"}) is None
+
+
+def test_match_own_group_allows_unique_multitoken_subset():
+    groups = [{"id": "g1", "name": "Zain Ul Abdeen Official", "num_looks": 3}]
+    # full identity name is a token-subset of the (longer) group name, and it's unique → safe match
+    assert _match_own_group(groups, {"Zain Ul Abdeen"})["id"] == "g1"
+
+
+def test_match_own_group_refuses_ambiguous_subset():
+    groups = [
+        {"id": "g1", "name": "Zain Ul Abdeen", "num_looks": 3},
+        {"id": "g2", "name": "Zain Ul Abdeen Junior", "num_looks": 9},
+    ]
+    # two distinct groups are token-compatible with 'Zain Ul' → refuse rather than guess
+    assert _match_own_group(groups, {"Zain Ul"}) is None
+
+
+def test_match_own_group_empty_identity():
+    assert _match_own_group(_groups(), set()) is None
+    assert _match_own_group(_groups(), {""}) is None
+
+
+@pytest.mark.asyncio
+async def test_connected_avatar_never_calls_group_when_no_group_id(monkeypatch):
+    called = {"n": 0}
+    async def spy(_gid):
+        called["n"] += 1
+        return []
+    monkeypatch.setattr(heygen, "list_group_looks", spy)
+    looks = await looks_for_connected_avatar(None, "av1", None, "ahmed")
+    assert called["n"] == 0                # no group_id -> no account-wide lookup at all
+    assert [l["avatar_id"] for l in looks] == ["av1"]

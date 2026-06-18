@@ -181,6 +181,35 @@ class Profile(Base):
     avatar_key: Mapped[Optional[str]] = mapped_column(Text)
 
 
+class HeygenAvatar(Base):
+    """One row per user who has a HeyGen AI avatar (digital twin), keyed by the Supabase auth
+    user id (== profiles.id). Written by the web app's Alpha Chat settings flow: the user records
+    a consent video, the site uploads it to HeyGen and creates their avatar, then stores the
+    resulting group_id + avatar_id here. This is the AUTHORITATIVE link between a person and the
+    avatar they're allowed to generate videos with — the backend reads it to guarantee a user can
+    only ever generate as THEMSELVES (never another person's avatar). RLS-on with no policies; read
+    here via the BYPASSRLS `postgres` role like our other web-app-owned tables."""
+    __tablename__ = "heygen_avatars"
+
+    # PK == Supabase auth user id (== profiles.id). No SQLAlchemy ForeignKey: the live constraint
+    # actually targets auth.users(id) (which profiles.id also references), and the sibling web-app
+    # tables (ayrshare_profiles, ask_alpha_settings) likewise declare user_id as a plain PK.
+    user_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    group_id: Mapped[Optional[str]] = mapped_column(Text)       # HeyGen avatar group id (holds the looks)
+    avatar_id: Mapped[Optional[str]] = mapped_column(Text)      # the primary look's avatar/talking-photo id
+    name: Mapped[Optional[str]] = mapped_column(Text)           # avatar name (often the email local part)
+    status: Mapped[Optional[str]] = mapped_column(Text)         # 'completed' when the twin is render-ready
+    consent_status: Mapped[Optional[str]] = mapped_column(Text)  # 'accepted' once the consent video is signed
+    consent_url: Mapped[Optional[str]] = mapped_column(Text)
+    source_key: Mapped[Optional[str]] = mapped_column(Text)
+    preview_image_url: Mapped[Optional[str]] = mapped_column(Text)
+    preview_video_url: Mapped[Optional[str]] = mapped_column(Text)
+    error_message: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ready_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class MessagingLink(Base):
     __tablename__ = "messaging_links"
 
