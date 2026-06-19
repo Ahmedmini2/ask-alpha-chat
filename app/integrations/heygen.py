@@ -428,6 +428,50 @@ async def generate_video(
     raise HeyGenError(f"v3 generate failed across variants: {last_err}")
 
 
+async def generate_cinematic_video(
+    prompt: str,
+    avatar_ids: list[str],
+    reference_urls: Optional[list[str]] = None,
+    aspect_ratio: str = "9:16",
+    resolution: str = "1080p",
+    duration: int = 15,
+    title: Optional[str] = None,
+) -> str:
+    """Submit a Cinematic Avatar (Seedance) job via /v3/videos (type 'cinematic_avatar').
+
+    Unlike generate_video() there is NO script or voice: motion and speech are driven entirely by
+    `prompt` plus the avatar look(s) and `reference_urls` (project photos). `avatar_ids` are 1–3 of
+    the caller's OWN avatar look ids used as visual references; `reference_urls` are publicly
+    fetchable image URLs (we presign project photos). Combined HeyGen limit: ≤9 images and ≤3 videos
+    across avatars + references. Returns the HeyGen video_id (poll it with get_video_status, same as
+    avatar videos — it's a normal /v3/videos id).
+    """
+    ids = [a for a in (avatar_ids or []) if a]
+    if not ids:
+        raise HeyGenError("generate_cinematic_video requires at least one avatar look id")
+    payload: dict = {
+        "type": "cinematic_avatar",
+        "prompt": (prompt or "")[:10000],
+        "avatar_id": ids[:3],                 # API accepts 1–3 look ids
+        "aspect_ratio": aspect_ratio,
+        "resolution": resolution,
+        "duration": duration,
+    }
+    if reference_urls:
+        payload["references"] = [{"type": "url", "url": u} for u in reference_urls if u]
+    if title:
+        payload["title"] = title
+    async with _client() as c:
+        r = await c.post("/v3/videos", json=payload)
+        if r.status_code >= 400:
+            raise HeyGenError(f"cinematic generate failed {r.status_code}: {r.text[:400]}")
+        data = r.json().get("data") or {}
+        vid = data.get("video_id")
+        if not vid:
+            raise HeyGenError(f"no video_id in cinematic response: {r.text[:300]}")
+        return vid
+
+
 async def upload_asset(image_bytes: bytes, content_type: str = "image/png") -> str:
     """Upload an image to HeyGen's asset store; returns a URL HeyGen will accept as background."""
     if not settings.heygen_api_key:

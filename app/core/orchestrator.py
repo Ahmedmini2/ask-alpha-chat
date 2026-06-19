@@ -233,9 +233,17 @@ of "Farm Gardens Villas") gets a video. search_projects ranks NAME matches first
 pick the top NAME match, never a project that only mentions the query in its description. If a name still \
 matches several phases of a master community, ask which specific phase before generating; NEVER silently \
 substitute a different project.
-- PROMO VIDEO — a strict, interactive 6-STEP flow. When the user asks for a "promo video", \
-"marketing video", "AI video" or similar, walk these steps IN ORDER, ONE AT A TIME, waiting for \
-the agent's reply between steps. Never skip ahead, and NEVER call create_promo_video before STEP 6.
+- PROMO VIDEO — TWO MODES. When the user asks for a "promo video", "marketing video", "AI video" \
+or similar, FIRST establish the project (STEP 1 below), THEN ask which mode they want — ask, \
+roughly: "Would you like Avatar V5 mode (the standard narrated promo we've been using) or the new \
+Cinematic mode (a short ~15-second cinematic clip where you appear in a project scene and speak a \
+line)?" Wait for their choice, then run the matching flow:
+    * AVATAR V5 (scripted) → the strict 6-STEP flow below (create_promo_video).
+    * CINEMATIC (new) → the CINEMATIC flow further down (create_cinematic_video).
+  Both modes are agents-only and ALWAYS use the signed-in agent's OWN avatar (see OWN AVATAR ONLY).
+- AVATAR V5 (scripted) MODE — a strict, interactive 6-STEP flow. Walk these steps IN ORDER, ONE AT \
+A TIME, waiting for the agent's reply between steps. Never skip ahead, and NEVER call \
+create_promo_video before STEP 6.
     STEP 1 — PROJECT: establish the project. If they named it, resolve it (search_projects, pick \
 the top NAME match; if several phases of a master community match, ask which one). Carry the EXACT \
 chosen name forward as `project_name` in every later call — never re-search with developer/city \
@@ -270,12 +278,33 @@ a second message.
   Both tools are agents-only (anonymous users get an error → tell them to sign in). If \
 create_promo_video returns needs_look_choice or "Couldn't match look", show the look names it \
 returned and re-ask — never guess a look.
+- CINEMATIC MODE — a shorter flow built on HeyGen's Cinematic Avatar (Seedance). It makes a \
+~15-second clip where the agent appears in a project scene and SPEAKS a short line; there is no \
+separate narration track, AI background, or outro question — the scene and the spoken line come \
+from the prompt, the project's own photos are attached automatically, the Allegiance outro is \
+ALWAYS added, and captions are added automatically. Walk these steps ONE AT A TIME:
+    C-STEP 1 — PROJECT: same as scripted STEP 1 (resolve once, carry the exact project_name).
+    C-STEP 2 — LOOK: call list_avatar_looks (project_name) and have the agent pick a look (skip if \
+'single_look'). Same own-avatar rules as scripted.
+    C-STEP 3 — SCENE + LINE: propose to the agent (a) a one-sentence SCENE for them to appear in \
+(e.g. "walking through a bright modern office with the Dubai skyline through the windows") and (b) \
+a SHORT spoken line of roughly 30–40 words (it's only ~15 seconds) written from the project's real \
+facts — never invent numbers. Show both and ask them to confirm or edit. Land on one final scene + line.
+    C-STEP 4 — CONFIRM: ask, verbatim, "Are you sure you want to generate this cinematic video?" \
+Only when they sign off, go to C-STEP 5. (There is NO outro question in cinematic mode.)
+    C-STEP 5 — GENERATE: You MUST actually CALL create_cinematic_video with project_name + look + \
+scene_prompt + spoken_line (the agreed line, verbatim). The same CRITICAL rule applies: never say \
+it's generating unless you called the tool THIS turn and it returned a video_id. On an `error`, say \
+generation did NOT start and why. On success send ONE message relaying the result's \
+`message`/`delivery_channel` verbatim. Cinematic clips take a few minutes — on web tell them to ask \
+"is my video ready?". check_my_video_status works for cinematic videos the same way.
 - OWN AVATAR ONLY: a promo video ALWAYS uses the signed-in agent's own AI avatar and voice — \
 the one tied to their account (their recorded avatar, or the HeyGen avatar in their name). There \
 is NO way to generate a video as another person. If the agent asks to "make a video for Rami", \
 "for Sarah", or "in Zain's voice", do NOT pass any name — tell them each agent can only generate \
 with their own avatar, and that the teammate should sign in and make their own. Never pass an \
-`agent_name`/teammate name to list_avatar_looks / draft_video_scripts / create_promo_video.
+`agent_name`/teammate name to list_avatar_looks / draft_video_scripts / create_promo_video / \
+create_cinematic_video.
 - The script passed to create_promo_video is ALWAYS the one agreed in STEP 3 — pass it verbatim as \
 `script`. Do not invent or re-write a different script at generation time.
 - When the user describes a desired background in the same message ("with Burj Khalifa", \
@@ -533,6 +562,9 @@ def _summarize_tool_result(name: str, result: dict) -> str:
         return f"{result.get('count', 0)} chunks"
     if name == "create_promo_video":
         return f"video_id={result.get('video_id')} status={result.get('status')} look={result.get('look')!r}"
+    if name == "create_cinematic_video":
+        return (f"cinematic video_id={result.get('video_id')} status={result.get('status')} "
+                f"look={result.get('look')!r} refs={result.get('reference_photos')}")
     if name == "list_avatar_looks":
         return (f"status={result.get('status')} agent={result.get('agent_name')!r} "
                 f"count={result.get('count')} telegram={result.get('sent_to_telegram')}")
@@ -674,9 +706,10 @@ def _build_cards(tool_calls: list[dict]) -> list[dict]:
             items = result.get("chunks", [])
             if items:
                 cards.append({"type": "document_quotes", "items": items})
-        elif name == "create_promo_video":
+        elif name in ("create_promo_video", "create_cinematic_video"):
             cards.append({
                 "type": "video_job",
+                "mode": result.get("mode", "avatar"),
                 "video_id": result.get("video_id"),
                 "status": result.get("status"),
                 "project_id": result.get("project_id"),

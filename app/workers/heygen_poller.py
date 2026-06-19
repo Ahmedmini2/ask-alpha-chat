@@ -149,15 +149,20 @@ async def _maybe_outro(video_id: UUID, deliver_url: str, project_id: Optional[in
 
 async def _broll_caption_and_finalize(
     video_id: UUID, raw_url: str, project_id: Optional[int], tg_chat_id: Optional[int],
-    script: Optional[str] = None, add_outro: bool = False,
+    script: Optional[str] = None, add_outro: bool = False, mode: str = "avatar",
 ) -> None:
     """Post-process a finished HeyGen video: (1) cut in property b-roll, (2) burn Hormozi captions
     (FAL whisper timings + the ground-truth script for spelling), (3) append the Allegiance outro
     when the agent opted in. Every stage is best-effort — any failure falls back to the best video
-    produced so far, so the job never fails. Sends exactly ONE completion notification."""
+    produced so far, so the job never fails. Sends exactly ONE completion notification.
+
+    For `mode == 'cinematic'` (Seedance) b-roll is SKIPPED: the clip is already a cinematic project
+    scene (and at ~15s it would otherwise cross the b-roll threshold). Captions still run off the
+    spoken line (passed as `script`), and the outro is still appended (add_outro is forced on)."""
     try:
-        # Phase 1 — b-roll. Its own concurrency guard, outside the caption semaphore.
-        broll_url = await _maybe_broll(video_id, raw_url, project_id)
+        # Phase 1 — b-roll. Its own concurrency guard, outside the caption semaphore. Cinematic
+        # clips skip it entirely (already cinematic; cutting property stills in would be wrong).
+        broll_url = None if mode == "cinematic" else await _maybe_broll(video_id, raw_url, project_id)
         source_url = broll_url or raw_url          # video we caption (composite if b-roll ran)
         deliver_url = broll_url or raw_url          # best video so far (b-roll or raw)
         caption_status = "skipped"
@@ -228,7 +233,7 @@ async def _poll_once() -> int:
 
         touched = 0
         notifications: list[tuple[int, str]] = []  # (chat_id, text)
-        to_caption: list[tuple] = []  # (video_id, raw_url, project_id, tg_chat_id, script, add_outro)
+        to_caption: list[tuple] = []  # (video_id, raw_url, project_id, tg_chat_id, script, add_outro, mode)
 
         for v in rows:
             if not v.heygen_video_id:
@@ -261,9 +266,9 @@ async def _poll_once() -> int:
                     ))
                     touched += 1
                     to_caption.append((v.id, video_url, v.project_id, v.telegram_chat_id,
-                                       v.script, v.add_outro))
-                    log.info("video %s rendered, queuing post-edit (b-roll/captions/outro=%s)",
-                             v.id, v.add_outro)
+                                       v.script, v.add_outro, v.mode))
+                    log.info("video %s rendered, queuing post-edit (mode=%s b-roll/captions/outro=%s)",
+                             v.id, v.mode, v.add_outro)
                 else:
                     await db.execute(update(Video).where(Video.id == v.id).values(
                         status="completed", video_url=video_url, thumbnail_url=thumb,
@@ -307,9 +312,9 @@ async def _poll_once() -> int:
 
     # Spawn the b-roll + captioning finalizer AFTER the commit so the 'captioning' status is
     # durable first (keeps the row out of the next poll cycle — no double-spawn).
-    for video_id, raw_url, project_id, tg_chat_id, script, add_outro in to_caption:
+    for video_id, raw_url, project_id, tg_chat_id, script, add_outro, mode in to_caption:
         asyncio.create_task(
-            _broll_caption_and_finalize(video_id, raw_url, project_id, tg_chat_id, script, add_outro))
+            _broll_caption_and_finalize(video_id, raw_url, project_id, tg_chat_id, script, add_outro, mode))
 
     return touched
 

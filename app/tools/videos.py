@@ -786,6 +786,236 @@ registry.register(Tool(
 ))
 
 
+# Cap on project photos attached as cinematic references (HeyGen allows ≤9 images across avatars +
+# references; the user asked for up to 4 project photos).
+MAX_CINEMATIC_REFERENCES = 4
+
+
+async def _project_reference_urls(db: AsyncSession, project: Project, k: int = MAX_CINEMATIC_REFERENCES) -> list[str]:
+    """Up to `k` of the project's own photos as publicly-fetchable URLs for HeyGen's cinematic
+    `references`. Reuses the brochure asset gatherer (project images by position) and presigns each
+    PRIVATE S3 object. Best-effort — returns 0..k URLs; never raises."""
+    from app.brochures import data as brochure_data, storage  # lazy: avoid import cycles
+    try:
+        images, _plans = await brochure_data._gather_assets(db, project)
+    except Exception as e:
+        log.warning("cinematic: project asset gather failed: %s", e)
+        return []
+    urls: list[str] = []
+    for a in images[:k]:
+        u = await storage.presign_get(a.s3_bucket, a.s3_key)
+        if u:
+            urls.append(u)
+    return urls
+
+
+def _compose_cinematic_prompt(scene_prompt: str, spoken_line: str, project: Project) -> str:
+    """Build the natural-language prompt Seedance renders: the SCENE plus the avatar speaking the
+    agreed line. The avatar's likeness comes from the avatar_id (not named here); we describe a
+    generic 'presenter' in the scene. Falls back to a project-tailored scene when none is given."""
+    scene = " ".join((scene_prompt or "").split())
+    if not scene:
+        loc = " ".join((project.district or "").split() + (project.city or "").split()) or "Dubai"
+        scene = (f"A real-estate presenter in a modern, premium setting for the {project.name} "
+                 f"development in {loc} — contemporary architecture, elegant interiors, natural light")
+    line = " ".join((spoken_line or "").split())
+    return (
+        f"{scene}. The presenter looks directly at the camera and says: \"{line}\". "
+        "Photorealistic, cinematic, smooth camera motion, shallow depth of field, natural lighting."
+    )[:10000]
+
+
+async def create_cinematic_video_handler(db: AsyncSession, args: dict, ctx: dict) -> dict:
+    user_id = ctx.get("user_id")
+    if user_id is None:
+        return {"error": "Sign in required. This feature is only for our agents."}
+    profile = await get_profile(db, user_id)
+    if not is_agent(profile):
+        return {"error": "This feature is only available to agents."}
+
+    # Same hard rule as the scripted promo: the clip ALWAYS uses the signed-in agent's OWN avatar.
+    av = await get_heygen_avatar(db, user_id)
+    requested_name = (args.get("agent_name") or "").strip()
+    if _agent_name_targets_other(requested_name, profile, av):
+        return {"error": f"You can only generate a cinematic video with your OWN AI avatar, not "
+                         f"{requested_name!r}'s. Each agent's avatar is tied to their account."}
+
+    project, project_err = await _resolve_project(db, args)
+    if project_err:
+        return project_err
+
+    looks, looks_err, meta = await _resolve_self_avatar(db, profile, user_id, av=av)
+    if looks_err:
+        return looks_err
+    target_name = meta["display_name"]
+
+    # Which look (the avatar's visual reference)? Same selection rules as the scripted flow.
+    look_arg = (args.get("look") or "").strip()
+    if look_arg:
+        chosen = heygen.find_look_in(looks, look_arg)
+        if chosen is None:
+            names = [lk["look_name"] for lk in looks]
+            return {"error": f"Couldn't match look {look_arg!r} for your avatar. "
+                             f"Available looks: {', '.join(names)}"}
+    elif len(looks) == 1:
+        chosen = looks[0]
+    else:
+        return {
+            "error": "Multiple looks available — ask the agent which look to use before generating.",
+            "needs_look_choice": True,
+            "agent_name": target_name,
+            "looks": [lk["look_name"] for lk in looks],
+        }
+
+    spoken_line = " ".join((args.get("spoken_line") or "").split())
+    if not spoken_line:
+        return {"error": "Provide spoken_line — the short sentence the avatar should say "
+                         "(it's a ~15s clip, so keep it to roughly 30–40 words)."}
+    # The avatar voice can't pronounce "AED"; speak amounts as "dirhams" (same rule as scripted).
+    spoken_line = _to_spoken_money(spoken_line)
+    scene_prompt = (args.get("scene_prompt") or "").strip()
+
+    aspect_ratio = (args.get("aspect_ratio") or "9:16").strip()
+    if aspect_ratio not in ("9:16", "16:9", "1:1"):
+        aspect_ratio = "9:16"
+
+    reference_urls = await _project_reference_urls(db, project)
+    full_prompt = _compose_cinematic_prompt(scene_prompt, spoken_line, project)
+
+    try:
+        heygen_video_id = await heygen.generate_cinematic_video(
+            full_prompt,
+            [chosen["avatar_id"]],
+            reference_urls=reference_urls,
+            aspect_ratio=aspect_ratio,
+            resolution="1080p",
+            duration=15,
+            title=f"{project.name} (cinematic)",
+        )
+    except heygen.HeyGenError as e:
+        log.error("HeyGen cinematic generation failed: %s", e)
+        return {"error": f"Video service error: {e}"}
+    if not heygen_video_id:
+        return {"error": "HeyGen did not return a video_id."}
+
+    now = datetime.now(timezone.utc)
+    tg_chat_id = ctx.get("telegram_chat_id")
+    # Cinematic always gets the Allegiance outro appended (per product decision); the spoken line is
+    # stored as `script` so the poller's caption step has the ground-truth text to burn in.
+    result = await db.execute(
+        insert(Video).values(
+            requested_by=user_id,
+            project_id=project.id,
+            script=spoken_line,
+            status="processing",
+            heygen_video_id=heygen_video_id,
+            created_at=now,
+            updated_at=now,
+            telegram_chat_id=tg_chat_id,
+            add_outro=True,
+            mode="cinematic",
+        ).returning(Video.id)
+    )
+    on_telegram = bool(tg_chat_id) or (ctx.get("channel") or "").lower() == "telegram"
+    delivery = (
+        "You'll get a Telegram message with the download link the moment it's ready."
+        if on_telegram else
+        "It'll be ready here in a couple of minutes — just ask \"is my video ready?\" and I'll "
+        "post the download link right here in this chat."
+    )
+    video_id = result.scalar_one()
+    await db.commit()
+
+    log.info(
+        "cinematic video job started id=%s heygen=%s project=%s by=%s for=%s look=%r avatar=%s refs=%d aspect=%s tg=%s",
+        video_id, heygen_video_id, project.id, user_id, target_name, chosen["look_name"],
+        chosen["avatar_id"], len(reference_urls), aspect_ratio, tg_chat_id,
+    )
+    return {
+        "video_id": str(video_id),
+        "status": "processing",
+        "mode": "cinematic",
+        "project_id": project.id,
+        "project_name": project.name,
+        "for_agent": target_name,
+        "avatar_name": target_name,
+        "look": chosen["look_name"],
+        "spoken_line_preview": spoken_line[:260],
+        "reference_photos": len(reference_urls),
+        "aspect_ratio": aspect_ratio,
+        "format": ("1920x1080 landscape (16:9)" if aspect_ratio == "16:9"
+                   else "1080x1080 square (1:1)" if aspect_ratio == "1:1"
+                   else "1080x1920 portrait (9:16, Reels/TikTok)"),
+        "duration_seconds": 15,
+        "add_outro": True,
+        "delivery_channel": "telegram" if on_telegram else "web",
+        "message": "Cinematic video generation started (Seedance). Typical wait is a few minutes. "
+                   + delivery,
+    }
+
+
+registry.register(Tool(
+    name="create_cinematic_video",
+    description=(
+        "Generate a short CINEMATIC promo video (HeyGen Cinematic Avatar / Seedance) about a "
+        "project. This is the NEW 'Cinematic mode' — distinct from create_promo_video (the scripted "
+        "'Avatar V5' mode). It produces a ~15-second clip where the agent appears in a project scene "
+        "and SPEAKS a short line; there is no separate narration track or AI background — the scene "
+        "and speech come from the prompt plus the project's photos (auto-attached as references). "
+        "Always uses the SIGNED-IN agent's OWN avatar — you cannot generate as another person, so "
+        "never pass a name. Agents only. Flow: resolve the project, call list_avatar_looks and have "
+        "the agent pick a look, propose a short scene + a ≤~40-word spoken line and confirm it with "
+        "the agent, THEN call this with project_name + look + scene_prompt + spoken_line. The "
+        "Allegiance outro is always appended and captions are added automatically — do NOT ask about "
+        "outro or captions for cinematic. Returns a video_id; poll with check_my_video_status."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "project_name": {
+                "type": "string",
+                "description": "Preferred. The EXACT project name the agent picked from search results.",
+            },
+            "project_id": {
+                "type": "integer",
+                "description": "Numeric project id — only if you already have it. Never guess it.",
+            },
+            "look": {
+                "type": "string",
+                "description": (
+                    "The avatar look the agent chose, by name (one of the names list_avatar_looks "
+                    "returned). Omit ONLY when the avatar has a single look."
+                ),
+            },
+            "scene_prompt": {
+                "type": "string",
+                "description": (
+                    "Natural-language description of the SCENE the agent is in (no spoken words here) "
+                    "— e.g. 'walking through a bright modern office with floor-to-ceiling windows "
+                    "showing the Dubai skyline at golden hour'. If omitted, a project-tailored scene "
+                    "is used. Describe the setting only; the avatar's face comes from their look."
+                ),
+            },
+            "spoken_line": {
+                "type": "string",
+                "description": (
+                    "REQUIRED. The short line the avatar should SAY to camera — keep it to roughly "
+                    "30–40 words (it's a ~15s clip). Write it from the project's real facts; never "
+                    "invent numbers. Currency is spoken as 'dirhams' automatically."
+                ),
+            },
+            "aspect_ratio": {
+                "type": "string",
+                "enum": ["9:16", "16:9", "1:1"],
+                "description": "Output shape. Defaults to 9:16 (portrait, Reels/TikTok). Use 16:9 for landscape.",
+            },
+        },
+        "required": ["spoken_line"],
+    },
+    handler=create_cinematic_video_handler,
+))
+
+
 async def draft_video_scripts_handler(db: AsyncSession, args: dict, ctx: dict) -> dict:
     user_id = ctx.get("user_id")
     if user_id is None:

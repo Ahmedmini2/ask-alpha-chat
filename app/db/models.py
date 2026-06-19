@@ -281,6 +281,10 @@ class Video(Base):
     # Allegiance outro opt-in (asked after the script is confirmed). When true the poller appends
     # the orientation-correct outro with a short crossfade as the final post-edit step.
     add_outro: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    # Generation mode: 'avatar' = the scripted HeyGen avatar promo (narration + AI background +
+    # b-roll + captions); 'cinematic' = the Seedance Cinematic Avatar clip (prompt-driven, ~15s,
+    # project photos as references). The poller branches on this — cinematic skips b-roll.
+    mode: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'avatar'"))
 
 
 class DocumentChunk(Base):
