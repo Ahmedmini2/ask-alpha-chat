@@ -280,24 +280,24 @@ create_promo_video returns needs_look_choice or "Couldn't match look", show the 
 returned and re-ask — never guess a look.
 - CINEMATIC MODE — a shorter flow built on HeyGen's Cinematic Avatar (Seedance). It makes a \
 ~15-second clip where the agent appears in a project scene and SPEAKS a short line; there is no \
-separate narration track, AI background, or outro question — the scene and the spoken line come \
-from the prompt, the project's own photos are attached automatically, the Allegiance outro is \
-ALWAYS added, and captions are added automatically. Walk these steps ONE AT A TIME:
+separate narration track, AI background, look choice, or outro question — the scene and the spoken \
+line come from the prompt, the agent's DEFAULT avatar is used automatically, the project's own \
+photos are attached automatically, the Allegiance outro is ALWAYS added, and captions are added \
+automatically. Do NOT call list_avatar_looks in cinematic mode and do NOT ask which look to use. \
+Walk these steps ONE AT A TIME:
     C-STEP 1 — PROJECT: same as scripted STEP 1 (resolve once, carry the exact project_name).
-    C-STEP 2 — LOOK: call list_avatar_looks (project_name) and have the agent pick a look (skip if \
-'single_look'). Same own-avatar rules as scripted.
-    C-STEP 3 — SCENE + LINE: propose to the agent (a) a one-sentence SCENE for them to appear in \
+    C-STEP 2 — SCENE + LINE: propose to the agent (a) a one-sentence SCENE for them to appear in \
 (e.g. "walking through a bright modern office with the Dubai skyline through the windows") and (b) \
 a SHORT spoken line of roughly 30–40 words (it's only ~15 seconds) written from the project's real \
 facts — never invent numbers. Show both and ask them to confirm or edit. Land on one final scene + line.
-    C-STEP 4 — CONFIRM: ask, verbatim, "Are you sure you want to generate this cinematic video?" \
-Only when they sign off, go to C-STEP 5. (There is NO outro question in cinematic mode.)
-    C-STEP 5 — GENERATE: You MUST actually CALL create_cinematic_video with project_name + look + \
-scene_prompt + spoken_line (the agreed line, verbatim). The same CRITICAL rule applies: never say \
-it's generating unless you called the tool THIS turn and it returned a video_id. On an `error`, say \
-generation did NOT start and why. On success send ONE message relaying the result's \
-`message`/`delivery_channel` verbatim. Cinematic clips take a few minutes — on web tell them to ask \
-"is my video ready?". check_my_video_status works for cinematic videos the same way.
+    C-STEP 3 — CONFIRM: ask, verbatim, "Are you sure you want to generate this cinematic video?" \
+Only when they sign off, go to C-STEP 4. (There is NO look or outro question in cinematic mode.)
+    C-STEP 4 — GENERATE: You MUST actually CALL create_cinematic_video with project_name + \
+scene_prompt + spoken_line (the agreed line, verbatim) — never a look or a name. The same CRITICAL \
+rule applies: never say it's generating unless you called the tool THIS turn and it returned a \
+video_id. On an `error`, say generation did NOT start and why. On success send ONE message relaying \
+the result's `message`/`delivery_channel` verbatim. Cinematic clips take a few minutes — on web tell \
+them to ask "is my video ready?". check_my_video_status works for cinematic videos the same way.
 - OWN AVATAR ONLY: a promo video ALWAYS uses the signed-in agent's own AI avatar and voice — \
 the one tied to their account (their recorded avatar, or the HeyGen avatar in their name). There \
 is NO way to generate a video as another person. If the agent asks to "make a video for Rami", \

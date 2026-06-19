@@ -1,6 +1,7 @@
 """Tests for Cinematic (Seedance) video mode: the create_cinematic_video handler (own-avatar
-enforcement, required spoken line, forced 15s/outro/mode, reference attachment), the heygen
-payload shape, and the poller branch that skips b-roll for cinematic clips."""
+enforcement, required spoken line, DEFAULT-avatar selection with no look question, forced
+15s/outro/mode, reference attachment + avatar-only retry), the heygen payload shape, the reference
+builder (re-encode to JPEG + upload to HeyGen), and the poller branch that skips b-roll."""
 import uuid
 import pytest
 
@@ -24,10 +25,10 @@ class FakeProfile:
 
 
 class FakeAvatar:
-    def __init__(self, name="zain"):
+    def __init__(self, name="zain", avatar_id="av1"):
         self.name = name
         self.group_id = "g1"
-        self.avatar_id = "av1"
+        self.avatar_id = avatar_id
         self.status = "completed"
         self.consent_status = "accepted"
         self.preview_image_url = None
@@ -68,16 +69,18 @@ def _agent(monkeypatch):
     async def fake_get_profile(_db, _uid):
         return FakeProfile()
     async def fake_get_avatar(_db, _uid):
-        return FakeAvatar()
+        return FakeAvatar()           # connected default avatar_id == "av1"
     monkeypatch.setattr(videos, "get_profile", fake_get_profile)
     monkeypatch.setattr(videos, "is_agent", lambda p: True)
     monkeypatch.setattr(videos, "get_heygen_avatar", fake_get_avatar)
 
 
 def _stub_pipeline(monkeypatch, *, looks=None, refs=None, capture=None):
-    """Stub project + avatar resolution + reference building, and capture the heygen call."""
+    """Stub project + avatar resolution + reference building, and capture the heygen call. The
+    resolver echoes the pre-fetched `av` into meta (as the real one does), so the handler's
+    default-avatar selection has a connected avatar_id to prefer."""
     looks = looks or [{"avatar_id": "av1", "look_name": "Original", "is_photo": True}]
-    refs = refs if refs is not None else ["https://s3/p1.jpg", "https://s3/p2.jpg"]
+    refs = refs if refs is not None else ["https://heygen/asset/1", "https://heygen/asset/2"]
 
     async def fake_resolve_project(_db, _args):
         return FakeProject(), None
@@ -115,8 +118,48 @@ async def test_cinematic_rejects_other_person(_agent):
 async def test_cinematic_requires_spoken_line(monkeypatch, _agent):
     _stub_pipeline(monkeypatch)
     out = await create_cinematic_video_handler(
-        FakeSession(uuid.uuid4()), {"project_name": "Arancia Yards", "look": "Original"}, _ctx())
+        FakeSession(uuid.uuid4()), {"project_name": "Arancia Yards"}, _ctx())
     assert "error" in out and "spoken_line" in out["error"]
+
+
+# --------------------------- default avatar (never asks for a look) ---------------------------
+
+@pytest.mark.asyncio
+async def test_cinematic_uses_connected_default_avatar_never_asks_look(monkeypatch, _agent):
+    cap = {}
+    # Two looks available; cinematic must pick the CONNECTED default (av1), never ask which look.
+    looks = [
+        {"avatar_id": "other_look", "look_name": "Studio", "is_photo": True},
+        {"avatar_id": "av1", "look_name": "Original", "is_photo": True},
+    ]
+    _stub_pipeline(monkeypatch, looks=looks, capture=cap)
+    out = await create_cinematic_video_handler(
+        FakeSession(uuid.uuid4()), {"project_name": "X", "spoken_line": "hi"}, _ctx())
+    assert "needs_look_choice" not in out and "error" not in out
+    assert cap["avatar_ids"] == ["av1"]          # the connected DEFAULT, not looks[0]
+
+
+@pytest.mark.asyncio
+async def test_cinematic_falls_back_to_primary_look_when_no_connected_id(monkeypatch, _agent):
+    cap = {}
+    looks = [{"avatar_id": "primary", "look_name": "Original", "is_photo": False}]
+
+    async def fake_resolve_project(_db, _a):
+        return FakeProject(), None
+    async def fake_resolve_self(_db, _p, _u, av=None):
+        return looks, None, {"display_name": "Zain", "source": "name-match", "avatar": None}
+    async def fake_refs(_db, _p, k=4):
+        return []
+    async def fake_generate(prompt, avatar_ids, **k):
+        cap["avatar_ids"] = avatar_ids
+        return "vid"
+    monkeypatch.setattr(videos, "_resolve_project", fake_resolve_project)
+    monkeypatch.setattr(videos, "_resolve_self_avatar", fake_resolve_self)
+    monkeypatch.setattr(videos, "_project_reference_urls", fake_refs)
+    monkeypatch.setattr(videos.heygen, "generate_cinematic_video", fake_generate)
+    out = await create_cinematic_video_handler(
+        FakeSession(uuid.uuid4()), {"project_name": "X", "spoken_line": "hi"}, _ctx())
+    assert "error" not in out and cap["avatar_ids"] == ["primary"]
 
 
 # --------------------------------- happy path / forced fields ---------------------------------
@@ -128,22 +171,20 @@ async def test_cinematic_forces_mode_outro_duration_and_avatar(monkeypatch, _age
     new_id = uuid.uuid4()
     out = await create_cinematic_video_handler(
         FakeSession(new_id),
-        {"project_name": "Arancia Yards", "look": "Original",
+        {"project_name": "Arancia Yards",
          "scene_prompt": "walking through a modern office", "spoken_line": "Welcome to Arancia Yards."},
         _ctx())
-    # result shape
     assert out["mode"] == "cinematic"
     assert out["add_outro"] is True
     assert out["duration_seconds"] == 15
     assert out["status"] == "processing"
     assert out["video_id"] == str(new_id)
     assert out["reference_photos"] == 2
-    # the heygen call: own look id, fixed 15s, default portrait, refs forwarded
     assert cap["avatar_ids"] == ["av1"]
     assert cap["duration"] == 15
     assert cap["aspect_ratio"] == "9:16"
     assert cap["resolution"] == "1080p"
-    assert cap["reference_urls"] == ["https://s3/p1.jpg", "https://s3/p2.jpg"]
+    assert cap["reference_urls"] == ["https://heygen/asset/1", "https://heygen/asset/2"]
     assert "Welcome to Arancia Yards." in cap["prompt"]
     assert "walking through a modern office" in cap["prompt"]
 
@@ -154,9 +195,8 @@ async def test_cinematic_invalid_aspect_falls_back_to_portrait(monkeypatch, _age
     _stub_pipeline(monkeypatch, capture=cap)
     await create_cinematic_video_handler(
         FakeSession(uuid.uuid4()),
-        {"project_name": "X", "look": "Original", "spoken_line": "hi", "aspect_ratio": "4:5"},
-        _ctx())
-    assert cap["aspect_ratio"] == "9:16"   # 4:5 isn't valid for cinematic → coerced
+        {"project_name": "X", "spoken_line": "hi", "aspect_ratio": "4:5"}, _ctx())
+    assert cap["aspect_ratio"] == "9:16"
 
 
 @pytest.mark.asyncio
@@ -165,8 +205,7 @@ async def test_cinematic_landscape_passes_through(monkeypatch, _agent):
     _stub_pipeline(monkeypatch, capture=cap)
     await create_cinematic_video_handler(
         FakeSession(uuid.uuid4()),
-        {"project_name": "X", "look": "Original", "spoken_line": "hi", "aspect_ratio": "16:9"},
-        _ctx())
+        {"project_name": "X", "spoken_line": "hi", "aspect_ratio": "16:9"}, _ctx())
     assert cap["aspect_ratio"] == "16:9"
 
 
@@ -176,10 +215,39 @@ async def test_cinematic_aed_in_spoken_line_becomes_dirhams(monkeypatch, _agent)
     _stub_pipeline(monkeypatch, capture=cap)
     await create_cinematic_video_handler(
         FakeSession(uuid.uuid4()),
-        {"project_name": "X", "look": "Original", "spoken_line": "Priced from AED 1.4M today."},
-        _ctx())
+        {"project_name": "X", "spoken_line": "Priced from AED 1.4M today."}, _ctx())
     assert "1.4 million dirhams" in cap["prompt"]
     assert "AED" not in cap["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_cinematic_retries_avatar_only_when_references_rejected(monkeypatch, _agent):
+    # The reported bug: HeyGen rejects the reference images' format → generation must NOT fail; it
+    # retries with the avatar only and still starts.
+    calls = []
+
+    async def fake_resolve_project(_db, _a):
+        return FakeProject(), None
+    async def fake_resolve_self(_db, _p, _u, av=None):
+        return [{"avatar_id": "av1", "look_name": "Original", "is_photo": True}], None, \
+               {"display_name": "Zain", "source": "connected", "avatar": av}
+    async def fake_refs(_db, _p, k=4):
+        return ["https://heygen/asset/1", "https://heygen/asset/2"]
+    async def fake_generate(prompt, avatar_ids, reference_urls=None, **k):
+        calls.append(reference_urls)
+        if reference_urls:
+            raise heygen.HeyGenError("400: unsupported image format in references")
+        return "vid_ok"
+    monkeypatch.setattr(videos, "_resolve_project", fake_resolve_project)
+    monkeypatch.setattr(videos, "_resolve_self_avatar", fake_resolve_self)
+    monkeypatch.setattr(videos, "_project_reference_urls", fake_refs)
+    monkeypatch.setattr(videos.heygen, "generate_cinematic_video", fake_generate)
+
+    out = await create_cinematic_video_handler(
+        FakeSession(uuid.uuid4()), {"project_name": "X", "spoken_line": "hi"}, _ctx())
+    assert out.get("video_id") and "error" not in out
+    assert out["reference_photos"] == 0                       # refs dropped on the retry
+    assert calls == [["https://heygen/asset/1", "https://heygen/asset/2"], None]
 
 
 # --------------------------------- pure helpers ---------------------------------
@@ -198,7 +266,7 @@ def test_compose_cinematic_prompt_fallback_scene_uses_project():
 
 
 @pytest.mark.asyncio
-async def test_project_reference_urls_presigns_up_to_k_and_skips_none(monkeypatch):
+async def test_project_reference_urls_reencodes_to_jpeg_and_uploads(monkeypatch):
     class A:
         def __init__(self, b, k):
             self.s3_bucket, self.s3_key = b, k
@@ -209,14 +277,24 @@ async def test_project_reference_urls_presigns_up_to_k_and_skips_none(monkeypatc
 
     async def fake_gather(_db, _project):
         return images, []
-    async def fake_presign(bucket, key, ttl=0):
-        return None if key == "k1" else f"https://signed/{key}"
+    async def fake_fetch(bucket, key):
+        return None if key == "k1" else b"raw-" + key.encode()       # k1 download fails
+    def fake_to_jpeg(raw):
+        return None if raw == b"raw-k2" else b"jpeg-" + raw          # k2 conversion fails
+    uploaded = []
+    async def fake_upload(jpeg, content_type="image/png"):
+        uploaded.append((jpeg, content_type))
+        return f"https://heygen/asset/{len(uploaded)}"
     monkeypatch.setattr(bdata, "_gather_assets", fake_gather)
-    monkeypatch.setattr(bstorage, "presign_get", fake_presign)
+    monkeypatch.setattr(bstorage, "fetch_asset_bytes", fake_fetch)
+    monkeypatch.setattr(videos, "_to_jpeg", fake_to_jpeg)
+    monkeypatch.setattr(videos.heygen, "upload_asset", fake_upload)
 
-    urls = await _project_reference_urls(object(), FakeProject(), k=4)
-    # k=4 candidates (k0..k3); k1 presign returned None → dropped
-    assert urls == ["https://signed/k0", "https://signed/k2", "https://signed/k3"]
+    urls = await _project_reference_urls(object(), FakeProject(), k=3)
+    # candidates k0(ok) k1(fetch->None) k2(jpeg->None) k3(ok) k4(ok) → 3 uploads (k0,k3,k4)
+    assert len(urls) == 3
+    assert all(u.startswith("https://heygen/asset/") for u in urls)
+    assert all(ct == "image/jpeg" for _, ct in uploaded)            # always JPEG (Seedance-safe)
 
 
 # --------------------------------- heygen payload shape ---------------------------------

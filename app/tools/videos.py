@@ -792,9 +792,12 @@ MAX_CINEMATIC_REFERENCES = 4
 
 
 async def _project_reference_urls(db: AsyncSession, project: Project, k: int = MAX_CINEMATIC_REFERENCES) -> list[str]:
-    """Up to `k` of the project's own photos as publicly-fetchable URLs for HeyGen's cinematic
-    `references`. Reuses the brochure asset gatherer (project images by position) and presigns each
-    PRIVATE S3 object. Best-effort — returns 0..k URLs; never raises."""
+    """Up to `k` of the project's own photos as HeyGen-hosted reference URLs for the cinematic
+    `references`. Project assets are often WEBP (or other formats) that the Seedance pipeline
+    rejects, so each image is downloaded from our private S3, re-encoded to JPEG, and uploaded to
+    HeyGen's asset store — which returns a URL HeyGen will always accept and can always fetch.
+    Best-effort: returns 0..k URLs, never raises, and silently drops any image that can't be
+    fetched, converted, or uploaded (so one bad asset can't sink the whole job)."""
     from app.brochures import data as brochure_data, storage  # lazy: avoid import cycles
     try:
         images, _plans = await brochure_data._gather_assets(db, project)
@@ -802,10 +805,19 @@ async def _project_reference_urls(db: AsyncSession, project: Project, k: int = M
         log.warning("cinematic: project asset gather failed: %s", e)
         return []
     urls: list[str] = []
-    for a in images[:k]:
-        u = await storage.presign_get(a.s3_bucket, a.s3_key)
-        if u:
-            urls.append(u)
+    for a in images:
+        if len(urls) >= k:
+            break
+        raw = await storage.fetch_asset_bytes(a.s3_bucket, a.s3_key)
+        if not raw:
+            continue
+        jpeg = await asyncio.to_thread(_to_jpeg, raw)  # WEBP/PNG/etc → JPEG (Seedance-safe)
+        if not jpeg:
+            continue
+        try:
+            urls.append(await heygen.upload_asset(jpeg, content_type="image/jpeg"))
+        except heygen.HeyGenError as e:
+            log.warning("cinematic: reference upload failed (%s); skipping image", e)
     return urls
 
 
@@ -849,23 +861,15 @@ async def create_cinematic_video_handler(db: AsyncSession, args: dict, ctx: dict
         return looks_err
     target_name = meta["display_name"]
 
-    # Which look (the avatar's visual reference)? Same selection rules as the scripted flow.
-    look_arg = (args.get("look") or "").strip()
-    if look_arg:
-        chosen = heygen.find_look_in(looks, look_arg)
-        if chosen is None:
-            names = [lk["look_name"] for lk in looks]
-            return {"error": f"Couldn't match look {look_arg!r} for your avatar. "
-                             f"Available looks: {', '.join(names)}"}
-    elif len(looks) == 1:
+    # Cinematic mode NEVER asks which look to use — it always uses the agent's DEFAULT avatar: their
+    # connected avatar_id (the twin they recorded) when present, else their primary resolved look.
+    # `looks` is guaranteed non-empty here (_resolve_self_avatar returned looks, not an error).
+    av_row = meta.get("avatar")
+    chosen = None
+    if av_row is not None and getattr(av_row, "avatar_id", None):
+        chosen = next((lk for lk in looks if lk["avatar_id"] == av_row.avatar_id), None)
+    if chosen is None:
         chosen = looks[0]
-    else:
-        return {
-            "error": "Multiple looks available — ask the agent which look to use before generating.",
-            "needs_look_choice": True,
-            "agent_name": target_name,
-            "looks": [lk["look_name"] for lk in looks],
-        }
 
     spoken_line = " ".join((args.get("spoken_line") or "").split())
     if not spoken_line:
@@ -882,19 +886,34 @@ async def create_cinematic_video_handler(db: AsyncSession, args: dict, ctx: dict
     reference_urls = await _project_reference_urls(db, project)
     full_prompt = _compose_cinematic_prompt(scene_prompt, spoken_line, project)
 
-    try:
-        heygen_video_id = await heygen.generate_cinematic_video(
+    async def _submit(refs: Optional[list]) -> str:
+        return await heygen.generate_cinematic_video(
             full_prompt,
             [chosen["avatar_id"]],
-            reference_urls=reference_urls,
+            reference_urls=refs,
             aspect_ratio=aspect_ratio,
             resolution="1080p",
             duration=15,
             title=f"{project.name} (cinematic)",
         )
+
+    try:
+        heygen_video_id = await _submit(reference_urls)
     except heygen.HeyGenError as e:
-        log.error("HeyGen cinematic generation failed: %s", e)
-        return {"error": f"Video service error: {e}"}
+        # A bad/unsupported reference image must NEVER block generation — retry with the avatar
+        # only (the avatar alone renders fine; we just lose the project photos as scene guides).
+        if reference_urls:
+            log.warning("cinematic with %d refs failed (%s); retrying avatar-only",
+                        len(reference_urls), e)
+            try:
+                heygen_video_id = await _submit(None)
+                reference_urls = []
+            except heygen.HeyGenError as e2:
+                log.error("HeyGen cinematic generation failed (avatar-only): %s", e2)
+                return {"error": f"Video service error: {e2}"}
+        else:
+            log.error("HeyGen cinematic generation failed: %s", e)
+            return {"error": f"Video service error: {e}"}
     if not heygen_video_id:
         return {"error": "HeyGen did not return a video_id."}
 
@@ -962,12 +981,13 @@ registry.register(Tool(
         "'Avatar V5' mode). It produces a ~15-second clip where the agent appears in a project scene "
         "and SPEAKS a short line; there is no separate narration track or AI background — the scene "
         "and speech come from the prompt plus the project's photos (auto-attached as references). "
-        "Always uses the SIGNED-IN agent's OWN avatar — you cannot generate as another person, so "
-        "never pass a name. Agents only. Flow: resolve the project, call list_avatar_looks and have "
-        "the agent pick a look, propose a short scene + a ≤~40-word spoken line and confirm it with "
-        "the agent, THEN call this with project_name + look + scene_prompt + spoken_line. The "
-        "Allegiance outro is always appended and captions are added automatically — do NOT ask about "
-        "outro or captions for cinematic. Returns a video_id; poll with check_my_video_status."
+        "Always uses the SIGNED-IN agent's OWN DEFAULT avatar — you cannot generate as another "
+        "person and you do NOT choose a look (do NOT call list_avatar_looks for cinematic, and never "
+        "pass a name). Agents only. Flow: resolve the project, propose a short scene + a ≤~40-word "
+        "spoken line and confirm it with the agent, THEN call this with project_name + scene_prompt + "
+        "spoken_line. The Allegiance outro is always appended and captions are added automatically — "
+        "do NOT ask about the look, outro, or captions for cinematic. Returns a video_id; poll with "
+        "check_my_video_status."
     ),
     input_schema={
         "type": "object",
@@ -979,13 +999,6 @@ registry.register(Tool(
             "project_id": {
                 "type": "integer",
                 "description": "Numeric project id — only if you already have it. Never guess it.",
-            },
-            "look": {
-                "type": "string",
-                "description": (
-                    "The avatar look the agent chose, by name (one of the names list_avatar_looks "
-                    "returned). Omit ONLY when the avatar has a single look."
-                ),
             },
             "scene_prompt": {
                 "type": "string",

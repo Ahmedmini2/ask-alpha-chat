@@ -33,24 +33,6 @@ def _get_object_bytes(bucket: str, key: str) -> bytes:
     return _s3.get_object(Bucket=bucket, Key=key)["Body"].read()
 
 
-async def presign_get(bucket: str, key: str, ttl: int = PRESIGN_TTL_SEC) -> str | None:
-    """Presigned GET URL for a PRIVATE asset object so an external service (e.g. HeyGen's
-    server-side fetch for cinematic references) can download it. Read-only — no upload. Returns
-    None on failure (e.g. missing creds/key) so callers can skip that image rather than fail."""
-    if not bucket or not key:
-        return None
-
-    def _sign() -> str:
-        return _s3.generate_presigned_url(
-            "get_object", Params={"Bucket": bucket, "Key": key}, ExpiresIn=ttl)
-
-    try:
-        return await asyncio.to_thread(_sign)
-    except Exception as e:
-        log.warning("presign failed s3://%s/%s: %s", bucket, key, e)
-        return None
-
-
 async def fetch_asset_bytes(bucket: str, key: str) -> bytes | None:
     """Download one S3 object; returns None instead of raising on failure."""
     try:
