@@ -285,6 +285,11 @@ class Video(Base):
     # b-roll + captions); 'cinematic' = the Seedance Cinematic Avatar clip (prompt-driven, ~15s,
     # project photos as references). The poller branches on this — cinematic skips b-roll.
     mode: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'avatar'"))
+    # Cinematic multi-clip: HeyGen caps a cinematic clip at ~15s, so a 30s/45s video is generated as
+    # 2–3 separate 15s clips whose HeyGen video_ids are listed here (in play order). NULL for a
+    # single-clip cinematic or an avatar video. When set (len > 1) the poller waits for ALL segments
+    # to finish, ffmpeg-stitches them, then captions + appends the outro.
+    heygen_segment_ids: Mapped[Optional[Any]] = mapped_column(JSONB)
 
 
 class DocumentChunk(Base):

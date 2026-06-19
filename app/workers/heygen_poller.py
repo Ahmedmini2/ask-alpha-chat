@@ -10,7 +10,7 @@ from app.brochures import storage
 from app.db.models import Project, Video
 from app.db.session import AsyncSessionLocal
 from app.integrations import fal, heygen
-from app.videos import align, broll, captions, outro
+from app.videos import align, broll, captions, outro, stitch
 
 log = logging.getLogger("askalpha.heygen_poller")
 
@@ -214,6 +214,57 @@ async def _broll_caption_and_finalize(
         log.exception("broll_caption_and_finalize crashed for %s: %s", video_id, e)
 
 
+def _cinematic_segments_state(payloads: list[dict]) -> str:
+    """Aggregate the HeyGen statuses of a multi-clip cinematic video's segments into one of:
+    'failed' (any segment failed), 'done' (ALL completed AND every one has a video_url) or
+    'pending' (still rendering). Pure — unit-tested."""
+    statuses = [(p.get("status") or "").lower() for p in payloads]
+    if any(s == "failed" for s in statuses):
+        return "failed"
+    if statuses and all(s == "completed" for s in statuses) and all(p.get("video_url") for p in payloads):
+        return "done"
+    return "pending"
+
+
+async def _merge_caption_and_finalize(
+    video_id: UUID, segment_urls: list[str], project_id: Optional[int],
+    tg_chat_id: Optional[int], script: Optional[str],
+) -> None:
+    """For a multi-clip cinematic video: download every rendered segment, ffmpeg-stitch them into one
+    continuous MP4, then run the SAME caption + outro post-edit as every other video. On any failure
+    the job is marked failed (and the agent notified) — we never deliver a half-stitched clip."""
+    try:
+        clips: list[bytes] = []
+        for u in segment_urls:
+            data = await broll._fetch_bytes(u)
+            if not data:
+                raise stitch.StitchError(f"could not download segment {u[:60]}")
+            clips.append(data)
+        merged = await stitch.concat_clips(clips)
+        async with AsyncSessionLocal() as db:
+            pname = await _project_name(db, project_id)
+        _key, merged_url = await storage.upload_mp4(
+            merged, f"{pname or 'cinematic'}-stitched", storage.ASSETS_BUCKET)
+        log.info("video %s stitched %d cinematic segments -> %s", video_id, len(segment_urls), merged_url)
+        # Hand the stitched clip to the shared finalizer: cinematic skips b-roll, captions the full
+        # script, and ALWAYS appends the outro (add_outro=True).
+        await _broll_caption_and_finalize(
+            video_id, merged_url, project_id, tg_chat_id, script, add_outro=True, mode="cinematic")
+    except Exception as e:
+        log.exception("cinematic stitch failed for %s: %s", video_id, e)
+        async with AsyncSessionLocal() as db:
+            await db.execute(update(Video).where(Video.id == video_id).values(
+                status="failed", caption_status="failed",
+                error=f"cinematic stitch failed: {e}"[:1000],
+                updated_at=datetime.now(timezone.utc),
+            ))
+            await db.commit()
+            pname = await _project_name(db, project_id)
+        if tg_chat_id:
+            label = f" for {pname}" if pname else ""
+            await _notify_telegram(int(tg_chat_id), f"❌ Your cinematic video{label} failed during stitching.")
+
+
 async def _poll_once() -> int:
     """Check every video in (pending, processing) and update if finished. Returns count touched."""
     async with AsyncSessionLocal() as db:
@@ -234,8 +285,45 @@ async def _poll_once() -> int:
         touched = 0
         notifications: list[tuple[int, str]] = []  # (chat_id, text)
         to_caption: list[tuple] = []  # (video_id, raw_url, project_id, tg_chat_id, script, add_outro, mode)
+        to_merge: list[tuple] = []    # (video_id, segment_urls, project_id, tg_chat_id, script)
 
         for v in rows:
+            # ── Multi-clip cinematic: wait for ALL segments, then stitch + caption + outro. ──
+            segs = v.heygen_segment_ids
+            if isinstance(segs, list) and len(segs) > 1:
+                now = datetime.now(timezone.utc)
+                try:
+                    seg_payloads = [await heygen.get_video_status(sid) for sid in segs]
+                except heygen.HeyGenError as e:
+                    log.warning("cinematic segment status check failed for %s: %s", v.id, e)
+                    continue
+                state = _cinematic_segments_state(seg_payloads)
+                if state == "failed":
+                    err_detail = next(
+                        (str(p.get("error")) for p in seg_payloads
+                         if (p.get("status") or "").lower() == "failed" and p.get("error")),
+                        "a cinematic segment failed to render")
+                    await db.execute(update(Video).where(Video.id == v.id).values(
+                        status="failed", error=err_detail, updated_at=now))
+                    touched += 1
+                    log.warning("cinematic video %s failed (segment): %s", v.id, err_detail)
+                    if v.telegram_chat_id:
+                        pname = await _project_name(db, v.project_id)
+                        label = f" for {pname}" if pname else ""
+                        notifications.append((int(v.telegram_chat_id),
+                                              f"❌ Your cinematic video{label} failed: {err_detail[:300]}"))
+                elif state == "done":
+                    # caption_status='processing' takes the row out of the poll set (no double-spawn).
+                    await db.execute(update(Video).where(Video.id == v.id).values(
+                        status="processing", caption_status="processing", updated_at=now))
+                    touched += 1
+                    urls = [p.get("video_url") for p in seg_payloads]
+                    to_merge.append((v.id, urls, v.project_id, v.telegram_chat_id, v.script))
+                    log.info("cinematic video %s: all %d segments rendered, queuing stitch", v.id, len(segs))
+                # else 'pending' → leave in the poll set for the next cycle.
+                continue
+
+            # ── Single HeyGen video (avatar mode, or a 1-clip cinematic). ──
             if not v.heygen_video_id:
                 continue
             try:
@@ -315,6 +403,12 @@ async def _poll_once() -> int:
     for video_id, raw_url, project_id, tg_chat_id, script, add_outro, mode in to_caption:
         asyncio.create_task(
             _broll_caption_and_finalize(video_id, raw_url, project_id, tg_chat_id, script, add_outro, mode))
+
+    # Spawn the stitch+caption+outro finalizer for multi-clip cinematic videos whose segments are all
+    # rendered (also after the commit, for the same no-double-spawn reason).
+    for video_id, urls, project_id, tg_chat_id, script in to_merge:
+        asyncio.create_task(
+            _merge_caption_and_finalize(video_id, urls, project_id, tg_chat_id, script))
 
     return touched
 

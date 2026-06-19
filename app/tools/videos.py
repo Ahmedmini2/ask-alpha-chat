@@ -837,6 +837,57 @@ def _compose_cinematic_prompt(scene_prompt: str, spoken_line: str, project: Proj
     )[:10000]
 
 
+# Each HeyGen Cinematic (Seedance) clip is capped at ~15s, so longer cinematic videos are generated
+# as N back-to-back 15s clips and stitched. Allowed total lengths and the resulting clip count.
+CINEMATIC_CLIP_SECONDS = 15
+CINEMATIC_LENGTHS = (15, 30, 45)   # → 1, 2, or 3 clips (+ the outro, ~5s, is always appended after)
+
+
+def _split_script(script: str, n: int) -> list[str]:
+    """Split one spoken script into `n` contiguous segments of roughly equal length — one per 15s
+    clip. Prefers whole-sentence boundaries (so no clip cuts mid-sentence); falls back to an even
+    word split when there aren't enough sentences. Always returns exactly `n` non-empty-ish parts in
+    order (a trailing empty part can occur only for a pathologically short script)."""
+    script = " ".join((script or "").split())
+    if n <= 1 or not script:
+        return [script]
+
+    words = script.split()
+    sentences = [s for s in re.split(r"(?<=[.!?])\s+", script) if s.strip()]
+    if len(sentences) >= n:
+        total = sum(len(s.split()) for s in sentences)
+        target = total / n
+        buckets: list[str] = []
+        cur: list[str] = []
+        cur_words = 0
+        for i, s in enumerate(sentences):
+            cur.append(s)
+            cur_words += len(s.split())
+            remaining_sentences = len(sentences) - (i + 1)
+            remaining_buckets = n - len(buckets) - 1
+            # Close this bucket when it reaches the per-clip target (and enough sentences remain to
+            # fill every later bucket), OR when we MUST — each remaining sentence now needs its own
+            # bucket. The second clause guarantees we never finish with an empty bucket.
+            if remaining_buckets > 0 and (
+                (cur_words >= target and remaining_sentences >= remaining_buckets)
+                or remaining_sentences <= remaining_buckets
+            ):
+                buckets.append(" ".join(cur))
+                cur, cur_words = [], 0
+        buckets.append(" ".join(cur))
+        if len(buckets) == n and all(b.strip() for b in buckets):
+            return buckets
+        # Fall through to the even word split if bucketing somehow left a gap.
+
+    # Even word split — guarantees n non-empty parts whenever there are at least n words.
+    sizes = [len(words) // n + (1 if i < len(words) % n else 0) for i in range(n)]
+    out, idx = [], 0
+    for sz in sizes:
+        out.append(" ".join(words[idx:idx + sz]))
+        idx += sz
+    return out
+
+
 async def create_cinematic_video_handler(db: AsyncSession, args: dict, ctx: dict) -> dict:
     user_id = ctx.get("user_id")
     if user_id is None:
@@ -871,63 +922,83 @@ async def create_cinematic_video_handler(db: AsyncSession, args: dict, ctx: dict
     if chosen is None:
         chosen = looks[0]
 
-    spoken_line = " ".join((args.get("spoken_line") or "").split())
-    if not spoken_line:
-        return {"error": "Provide spoken_line — the short sentence the avatar should say "
-                         "(it's a ~15s clip, so keep it to roughly 30–40 words)."}
+    full_script = " ".join((args.get("spoken_line") or "").split())
+    if not full_script:
+        return {"error": "Provide spoken_line — the spoken script the avatar should say. Keep it to "
+                         "roughly 30–40 words per 15 seconds of video."}
     # The avatar voice can't pronounce "AED"; speak amounts as "dirhams" (same rule as scripted).
-    spoken_line = _to_spoken_money(spoken_line)
+    full_script = _to_spoken_money(full_script)
     scene_prompt = (args.get("scene_prompt") or "").strip()
 
     aspect_ratio = (args.get("aspect_ratio") or "9:16").strip()
     if aspect_ratio not in ("9:16", "16:9", "1:1"):
         aspect_ratio = "9:16"
 
-    reference_urls = await _project_reference_urls(db, project)
-    full_prompt = _compose_cinematic_prompt(scene_prompt, spoken_line, project)
+    # Desired total length → number of 15s clips (1, 2 or 3). HeyGen caps a cinematic clip at ~15s,
+    # so 30s/45s are generated as N separate clips, stitched by the poller once all have rendered.
+    try:
+        length_seconds = int(args.get("length_seconds") or CINEMATIC_CLIP_SECONDS)
+    except (TypeError, ValueError):
+        length_seconds = CINEMATIC_CLIP_SECONDS
+    if length_seconds not in CINEMATIC_LENGTHS:
+        length_seconds = CINEMATIC_CLIP_SECONDS
+    n_clips = length_seconds // CINEMATIC_CLIP_SECONDS
 
-    async def _submit(refs: Optional[list]) -> str:
+    segments = [s for s in _split_script(full_script, n_clips) if s.strip()] or [full_script]
+
+    # Upload the project photos to HeyGen ONCE and reuse the URLs across every segment.
+    reference_urls = await _project_reference_urls(db, project)
+
+    async def _submit(line: str, idx: int, refs: Optional[list]) -> str:
         return await heygen.generate_cinematic_video(
-            full_prompt,
+            _compose_cinematic_prompt(scene_prompt, line, project),
             [chosen["avatar_id"]],
             reference_urls=refs,
             aspect_ratio=aspect_ratio,
             resolution="1080p",
-            duration=15,
-            title=f"{project.name} (cinematic)",
+            duration=CINEMATIC_CLIP_SECONDS,
+            title=f"{project.name} (cinematic {idx + 1}/{len(segments)})",
         )
 
-    try:
-        heygen_video_id = await _submit(reference_urls)
-    except heygen.HeyGenError as e:
-        # A bad/unsupported reference image must NEVER block generation — retry with the avatar
-        # only (the avatar alone renders fine; we just lose the project photos as scene guides).
-        if reference_urls:
-            log.warning("cinematic with %d refs failed (%s); retrying avatar-only",
-                        len(reference_urls), e)
-            try:
-                heygen_video_id = await _submit(None)
-                reference_urls = []
-            except heygen.HeyGenError as e2:
-                log.error("HeyGen cinematic generation failed (avatar-only): %s", e2)
-                return {"error": f"Video service error: {e2}"}
-        else:
-            log.error("HeyGen cinematic generation failed: %s", e)
-            return {"error": f"Video service error: {e}"}
-    if not heygen_video_id:
-        return {"error": "HeyGen did not return a video_id."}
+    segment_ids: list[str] = []
+    used_refs = bool(reference_urls)
+    for idx, line in enumerate(segments):
+        try:
+            segment_ids.append(await _submit(line, idx, reference_urls))
+        except heygen.HeyGenError as e:
+            # A bad/unsupported reference image must NEVER block generation — retry this clip with
+            # the avatar only (the avatar alone renders fine; we just lose the photos as guides).
+            if reference_urls:
+                log.warning("cinematic clip %d/%d with refs failed (%s); retrying avatar-only",
+                            idx + 1, len(segments), e)
+                try:
+                    segment_ids.append(await _submit(line, idx, None))
+                    used_refs = False
+                except heygen.HeyGenError as e2:
+                    log.error("HeyGen cinematic clip generation failed (avatar-only): %s", e2)
+                    return {"error": f"Video service error: {e2}"}
+            else:
+                log.error("HeyGen cinematic clip generation failed: %s", e)
+                return {"error": f"Video service error: {e}"}
+
+    if not segment_ids:
+        return {"error": "HeyGen did not return any video_id."}
 
     now = datetime.now(timezone.utc)
     tg_chat_id = ctx.get("telegram_chat_id")
-    # Cinematic always gets the Allegiance outro appended (per product decision); the spoken line is
-    # stored as `script` so the poller's caption step has the ground-truth text to burn in.
+    # Cinematic always gets the Allegiance outro appended (per product decision); the FULL script is
+    # stored so the poller's caption step has the ground-truth text for the whole stitched video.
+    # A single clip stores only heygen_video_id (existing single-video poller path); 2–3 clips store
+    # heygen_segment_ids so the poller waits for all, stitches, then captions + outros.
+    multi = len(segment_ids) > 1
     result = await db.execute(
         insert(Video).values(
             requested_by=user_id,
             project_id=project.id,
-            script=spoken_line,
+            script=full_script,
             status="processing",
-            heygen_video_id=heygen_video_id,
+            heygen_video_id=segment_ids[0],
+            heygen_segment_ids=(segment_ids if multi else None),
             created_at=now,
             updated_at=now,
             telegram_chat_id=tg_chat_id,
@@ -945,10 +1016,11 @@ async def create_cinematic_video_handler(db: AsyncSession, args: dict, ctx: dict
     video_id = result.scalar_one()
     await db.commit()
 
+    refs_used = len(reference_urls) if used_refs else 0
     log.info(
-        "cinematic video job started id=%s heygen=%s project=%s by=%s for=%s look=%r avatar=%s refs=%d aspect=%s tg=%s",
-        video_id, heygen_video_id, project.id, user_id, target_name, chosen["look_name"],
-        chosen["avatar_id"], len(reference_urls), aspect_ratio, tg_chat_id,
+        "cinematic video job started id=%s clips=%d heygen=%s project=%s by=%s for=%s look=%r avatar=%s refs=%d aspect=%s len=%ds tg=%s",
+        video_id, len(segment_ids), ",".join(segment_ids), project.id, user_id, target_name,
+        chosen["look_name"], chosen["avatar_id"], refs_used, aspect_ratio, length_seconds, tg_chat_id,
     )
     return {
         "video_id": str(video_id),
@@ -959,34 +1031,40 @@ async def create_cinematic_video_handler(db: AsyncSession, args: dict, ctx: dict
         "for_agent": target_name,
         "avatar_name": target_name,
         "look": chosen["look_name"],
-        "spoken_line_preview": spoken_line[:260],
-        "reference_photos": len(reference_urls),
+        "spoken_line_preview": full_script[:260],
+        "reference_photos": refs_used,
+        "clips": len(segment_ids),
         "aspect_ratio": aspect_ratio,
         "format": ("1920x1080 landscape (16:9)" if aspect_ratio == "16:9"
                    else "1080x1080 square (1:1)" if aspect_ratio == "1:1"
                    else "1080x1920 portrait (9:16, Reels/TikTok)"),
-        "duration_seconds": 15,
+        "duration_seconds": length_seconds,
         "add_outro": True,
         "delivery_channel": "telegram" if on_telegram else "web",
-        "message": "Cinematic video generation started (Seedance). Typical wait is a few minutes. "
-                   + delivery,
+        "message": (
+            f"Cinematic video generation started (Seedance) — {len(segment_ids)} clip"
+            f"{'s' if len(segment_ids) > 1 else ''} for a ~{length_seconds}s video. "
+            "These take a few minutes (longer for 30s/45s). " + delivery
+        ),
     }
 
 
 registry.register(Tool(
     name="create_cinematic_video",
     description=(
-        "Generate a short CINEMATIC promo video (HeyGen Cinematic Avatar / Seedance) about a "
-        "project. This is the NEW 'Cinematic mode' — distinct from create_promo_video (the scripted "
-        "'Avatar V5' mode). It produces a ~15-second clip where the agent appears in a project scene "
-        "and SPEAKS a short line; there is no separate narration track or AI background — the scene "
-        "and speech come from the prompt plus the project's photos (auto-attached as references). "
+        "Generate a CINEMATIC promo video (HeyGen Cinematic Avatar / Seedance) about a project. This "
+        "is the NEW 'Cinematic mode' — distinct from create_promo_video (the scripted 'Avatar V5' "
+        "mode). The agent appears in a project scene and SPEAKS the script; there is no separate "
+        "narration track or AI background — scene and speech come from the prompt plus the project's "
+        "photos (auto-attached). Length can be 15, 30 or 45 seconds: HeyGen caps a clip at ~15s, so "
+        "30s/45s are generated as 2 or 3 clips that the server stitches together automatically. "
         "Always uses the SIGNED-IN agent's OWN DEFAULT avatar — you cannot generate as another "
         "person and you do NOT choose a look (do NOT call list_avatar_looks for cinematic, and never "
-        "pass a name). Agents only. Flow: resolve the project, propose a short scene + a ≤~40-word "
-        "spoken line and confirm it with the agent, THEN call this with project_name + scene_prompt + "
-        "spoken_line. The Allegiance outro is always appended and captions are added automatically — "
-        "do NOT ask about the look, outro, or captions for cinematic. Returns a video_id; poll with "
+        "pass a name). Agents only. Flow: resolve the project, ASK the agent which length they want "
+        "(15/30/45s), propose a scene + a spoken script sized to that length (~30–40 words per 15s) "
+        "and confirm it, THEN call this with project_name + scene_prompt + spoken_line + "
+        "length_seconds. The Allegiance outro is always appended and captions are added automatically "
+        "— do NOT ask about the look, outro, or captions for cinematic. Returns a video_id; poll with "
         "check_my_video_status."
     ),
     input_schema={
@@ -1000,6 +1078,15 @@ registry.register(Tool(
                 "type": "integer",
                 "description": "Numeric project id — only if you already have it. Never guess it.",
             },
+            "length_seconds": {
+                "type": "integer",
+                "enum": [15, 30, 45],
+                "description": (
+                    "Total video length the agent chose: 15 (one clip), 30 (two clips) or 45 (three "
+                    "clips), stitched server-side. Defaults to 15. The Allegiance outro (~5s) is "
+                    "appended on top. Ask the agent which length they want before generating."
+                ),
+            },
             "scene_prompt": {
                 "type": "string",
                 "description": (
@@ -1012,9 +1099,11 @@ registry.register(Tool(
             "spoken_line": {
                 "type": "string",
                 "description": (
-                    "REQUIRED. The short line the avatar should SAY to camera — keep it to roughly "
-                    "30–40 words (it's a ~15s clip). Write it from the project's real facts; never "
-                    "invent numbers. Currency is spoken as 'dirhams' automatically."
+                    "REQUIRED. The spoken SCRIPT the avatar says to camera. Size it to length_seconds "
+                    "— roughly 30–40 words per 15 seconds (so ~30–40 words for 15s, ~60–80 for 30s, "
+                    "~90–120 for 45s). The server splits it across the clips at sentence boundaries. "
+                    "Write it from the project's real facts; never invent numbers. Currency is spoken "
+                    "as 'dirhams' automatically."
                 ),
             },
             "aspect_ratio": {
