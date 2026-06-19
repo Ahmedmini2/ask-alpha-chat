@@ -479,7 +479,7 @@ def test_split_script_no_sentence_breaks_word_splits():
 # ------------------------------- stitch.concat_clips -------------------------------
 
 @pytest.mark.asyncio
-async def test_concat_clips_builds_concat_filter(monkeypatch):
+async def test_concat_clips_crossfades_video_hardjoins_audio(monkeypatch):
     captured = {}
 
     def fake_probe(path, cfg):
@@ -495,7 +495,34 @@ async def test_concat_clips_builds_concat_filter(monkeypatch):
 
     out = await stitch.concat_clips([b"a", b"b", b"c"])
     assert out == b"STITCHED"
-    assert "concat=n=3:v=1:a=1" in " ".join(captured["args"])
+    fc = " ".join(captured["args"])
+    assert "xfade=transition=fade" in fc               # VIDEO is crossfaded
+    assert fc.count("xfade") == 2                       # 3 clips → 2 joins
+    assert "concat=n=3:v=0:a=1" in fc                   # AUDIO is hard-joined (no speech overlap)
+    assert "atrim=end=14.600" in fc                     # non-final clips trimmed by the 0.4s xfade
+
+
+@pytest.mark.asyncio
+async def test_concat_clips_falls_back_to_hardcut_on_xfade_failure(monkeypatch):
+    runs = []
+
+    def fake_probe(path, cfg):
+        return (1080, 1920, 30.0, 15.0)
+    def fake_normalize(src, dst, w, h, fps, cfg):
+        Path(dst).write_bytes(b"N")
+    def fake_run(args, timeout):
+        runs.append(" ".join(args))
+        if len(runs) == 1:                              # first (crossfade) render fails
+            raise stitch.broll.BrollError("xfade boom")
+        Path(args[-1]).write_bytes(b"HARDCUT")
+    monkeypatch.setattr(stitch.broll, "_probe", fake_probe)
+    monkeypatch.setattr(stitch.outro, "_normalize", fake_normalize)
+    monkeypatch.setattr(stitch.broll, "_run_ffmpeg", fake_run)
+
+    out = await stitch.concat_clips([b"a", b"b", b"c"])
+    assert out == b"HARDCUT"
+    assert "xfade" in runs[0]                           # tried crossfade first
+    assert "concat=n=3:v=1:a=1" in runs[1]              # then fell back to a hard-cut concat
 
 
 @pytest.mark.asyncio
@@ -519,6 +546,34 @@ async def test_concat_clips_single_clip_skips_ffmpeg(monkeypatch):
 async def test_concat_clips_empty_raises():
     with pytest.raises(stitch.StitchError):
         await stitch.concat_clips([])
+
+
+# ---- regression: normalize must pin duration with -t, never -shortest (the stitch-inflation bug) ----
+
+def test_normalize_pins_exact_duration_not_shortest_with_audio(monkeypatch):
+    from app.videos import outro, broll
+    cap = {}
+    monkeypatch.setattr(broll, "_probe", lambda src, cfg: (1080, 1920, 30.0, 15.0))
+    monkeypatch.setattr(outro, "_has_audio", lambda src, cfg: True)
+    monkeypatch.setattr(broll, "_run_ffmpeg", lambda args, t: cap.update(args=args))
+    outro._normalize("in.mp4", "out.mp4", 1080, 1920, 30.0, broll.BrollConfig.from_settings())
+    a = cap["args"]
+    assert "-shortest" not in a                          # the bug: -shortest + apad inflated duration
+    assert "-t" in a and a[a.index("-t") + 1] == "15.000"  # pinned to the source's exact duration
+    assert "apad" in a
+
+
+def test_normalize_pins_exact_duration_not_shortest_no_audio(monkeypatch):
+    from app.videos import outro, broll
+    cap = {}
+    monkeypatch.setattr(broll, "_probe", lambda src, cfg: (1080, 1920, 30.0, 12.5))
+    monkeypatch.setattr(outro, "_has_audio", lambda src, cfg: False)
+    monkeypatch.setattr(broll, "_run_ffmpeg", lambda args, t: cap.update(args=args))
+    outro._normalize("in.mp4", "out.mp4", 1080, 1920, 30.0, broll.BrollConfig.from_settings())
+    a = cap["args"]
+    assert "-shortest" not in a
+    assert "-t" in a and a[a.index("-t") + 1] == "12.500"
+    assert "anullsrc=channel_layout=stereo:sample_rate=44100" in a
 
 
 # --------------------- poller: segment-state + stitch finalizer ---------------------

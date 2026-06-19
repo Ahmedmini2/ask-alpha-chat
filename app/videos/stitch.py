@@ -21,9 +21,59 @@ from app.videos import broll, outro
 
 log = logging.getLogger("askalpha.stitch")
 
+# Crossfade between consecutive segments to smooth the visual seam where independently-generated
+# Seedance clips meet (the avatar's pose/look can shift at a hard cut). Kept short so it falls on the
+# sentence-boundary pause between segments (the script is split on sentence boundaries).
+SEGMENT_TRANSITION_SEC = 0.4
+
 
 class StitchError(Exception):
     pass
+
+
+def _crossfade_filtergraph(n: int, durs: list[float], t: float) -> str:
+    """ffmpeg filter_complex that crossfades the VIDEO between segments (smooth seam) while HARD-
+    joining the AUDIO (no overlapping/garbled speech). Each clip's audio stays head-aligned with its
+    video; only the trailing `t` of every non-final clip (its fade-out region) is dropped, so the
+    audio total equals the crossfaded video total and A/V stay in sync.
+
+    Video: chained xfade. The offset of join i is the running output length so far minus t. Audio:
+    each non-final clip trimmed to (dur - t), the last clip kept whole, then all concatenated."""
+    vparts: list[str] = []
+    prev = "[0:v]"
+    cum = durs[0]
+    for i in range(1, n):
+        offset = max(0.0, cum - t)
+        out = "[v]" if i == n - 1 else f"[vx{i}]"
+        vparts.append(f"{prev}[{i}:v]xfade=transition=fade:duration={t:.3f}:offset={offset:.3f}{out}")
+        cum = cum + durs[i] - t
+        prev = out
+
+    aparts: list[str] = []
+    alabels: list[str] = []
+    for i in range(n):
+        lbl = f"[a{i}]"
+        if i < n - 1:
+            aparts.append(f"[{i}:a]atrim=end={max(0.0, durs[i] - t):.3f},asetpts=PTS-STARTPTS{lbl}")
+        else:
+            aparts.append(f"[{i}:a]asetpts=PTS-STARTPTS{lbl}")
+        alabels.append(lbl)
+    aparts.append(f"{''.join(alabels)}concat=n={n}:v=0:a=1[a]")
+    return ";".join(vparts + aparts)
+
+
+def _hardcut_filtergraph(n: int) -> str:
+    """Plain back-to-back concat (no crossfade) — the resilient fallback if a crossfade render fails."""
+    streams = "".join(f"[{i}:v:0][{i}:a:0]" for i in range(n))
+    return f"{streams}concat=n={n}:v=1:a=1[v][a]"
+
+
+def _render(inputs: list[str], fc: str, out_path: "Path", cfg: "broll.BrollConfig") -> None:
+    args = [cfg.ffmpeg, "-y", *inputs, "-filter_complex", fc,
+            "-map", "[v]", "-map", "[a]",
+            "-c:v", "libx264", "-preset", cfg.preset, "-crf", str(cfg.crf),
+            "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "+faststart", str(out_path)]
+    broll._run_ffmpeg(args, cfg.timeout_sec)
 
 
 def _concat_sync(clips: list[bytes], cfg: "broll.BrollConfig") -> bytes:
@@ -40,7 +90,7 @@ def _concat_sync(clips: list[bytes], cfg: "broll.BrollConfig") -> bytes:
             raw_paths.append(p)
 
         # All segments share the same cinematic aspect/resolution, but normalise to the FIRST clip's
-        # exact w×h×fps + a stereo AAC track so the concat filter gets identical stream params.
+        # exact w×h×fps + a stereo AAC track so xfade/concat get identical stream params.
         w, h, fps, _dur = broll._probe(str(raw_paths[0]), cfg)
         norm_paths = []
         for i, p in enumerate(raw_paths):
@@ -54,21 +104,35 @@ def _concat_sync(clips: list[bytes], cfg: "broll.BrollConfig") -> bytes:
                 raise StitchError("ffmpeg produced empty output")
             return data
 
-        out_path = tmpp / "stitched.mp4"
+        n = len(norm_paths)
+        durs = [broll._probe(str(p), cfg)[3] for p in norm_paths]
+        if any(not d or d <= 0 for d in durs):
+            raise StitchError("could not probe a segment duration")
+        t = max(0.2, min(SEGMENT_TRANSITION_SEC, min(durs) / 4.0))
         inputs: list[str] = []
-        for n in norm_paths:
-            inputs += ["-i", str(n)]
-        streams = "".join(f"[{i}:v:0][{i}:a:0]" for i in range(len(norm_paths)))
-        fc = f"{streams}concat=n={len(norm_paths)}:v=1:a=1[v][a]"
-        args = [cfg.ffmpeg, "-y", *inputs, "-filter_complex", fc,
-                "-map", "[v]", "-map", "[a]",
-                "-c:v", "libx264", "-preset", cfg.preset, "-crf", str(cfg.crf),
-                "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "+faststart", str(out_path)]
-        broll._run_ffmpeg(args, cfg.timeout_sec)
+        for p in norm_paths:
+            inputs += ["-i", str(p)]
+        out_path = tmpp / "stitched.mp4"
+
+        # Crossfade the segments; if that render fails for any reason, fall back to a plain hard cut
+        # so a stitched video is still delivered.
+        try:
+            _render(inputs, _crossfade_filtergraph(n, durs, t), out_path, cfg)
+        except broll.BrollError as e:
+            log.warning("crossfade stitch failed (%s); falling back to a hard-cut concat", e)
+            _render(inputs, _hardcut_filtergraph(n), out_path, cfg)
 
         data = out_path.read_bytes()
         if not data:
             raise StitchError("ffmpeg produced empty output")
+        # Sanity log: crossfaded duration should be ~ sum(segments) - (n-1)*t. A large shortfall means
+        # a normalize/stitch regression (e.g. the old -shortest duration bug).
+        out_dur = broll._probe(str(out_path), cfg)[3]
+        log.info("stitched %d clips -> %.1fs (segments %s, xfade %.2fs)",
+                 n, out_dur, ", ".join(f"{d:.1f}s" for d in durs), t)
+        if out_dur < 0.8 * (sum(durs) - (n - 1) * t):
+            log.warning("stitched duration %.1fs is well under the expected %.1fs",
+                        out_dur, sum(durs) - (n - 1) * t)
         return data
 
 

@@ -59,25 +59,34 @@ def _has_audio(path: str, cfg: "broll.BrollConfig") -> bool:
 
 def _normalize(src: str, dst: str, w: int, h: int, fps: float, cfg: "broll.BrollConfig") -> None:
     """Re-encode `src` to exactly w×h @ fps, yuv420p, with a stereo AAC track (real audio if the
-    clip has one, otherwise synthesised silence) so both clips share identical params for xfade."""
+    clip has one, otherwise synthesised silence) so clips share identical params for xfade/concat.
+
+    The output is pinned to the source's OWN video duration via `-t` — NOT `-shortest`. `-shortest`
+    combined with `apad`/`anullsrc` (an UNBOUNDED audio stream) cuts at an unpredictable point well
+    past the video end (observed: 15s clips ballooning to 30–37s, non-deterministically), which
+    corrupted both stitched cinematic videos and outro'd videos. `-t src_dur` forces
+    audio_len == video_len == src_dur exactly and deterministically."""
+    src_dur = broll._probe(src, cfg)[3]
+    if not src_dur or src_dur <= 0:
+        raise OutroError(f"could not probe a valid duration for {src}")
+    dur = f"{src_dur:.3f}"
     vf = (f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
           f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps:.3f},format=yuv420p")
     common_v = ["-c:v", "libx264", "-preset", cfg.preset, "-crf", str(cfg.crf), "-pix_fmt", "yuv420p"]
     common_a = ["-c:a", "aac", "-ar", "44100", "-ac", "2"]
     if _has_audio(src, cfg):
-        # Pin the audio length to the video length: `apad` pads short audio with silence and
-        # `-shortest` (video ends first) trims long audio, so audio_len == video_len exactly.
-        # xfade pins the video transition to a fixed timestamp while acrossfade always anchors to
-        # the FIRST input's audio length; if the two differed the outro audio would lead/lag its
-        # video. Forcing audio==video here (for both clips) keeps the two transitions coincident.
+        # `apad` pads short audio with silence; `-t src_dur` then trims BOTH streams to the exact
+        # video length, so audio_len == video_len. (xfade pins the video transition to a fixed
+        # timestamp while acrossfade anchors to the first input's audio length; forcing them equal
+        # keeps the two transitions coincident.)
         args = [cfg.ffmpeg, "-y", "-i", src, "-vf", vf, "-af", "apad",
-                "-map", "0:v:0", "-map", "0:a:0", "-shortest", *common_v, *common_a,
+                "-map", "0:v:0", "-map", "0:a:0", "-t", dur, *common_v, *common_a,
                 "-movflags", "+faststart", dst]
     else:
-        # Synthesise a silent stereo track and trim it to the video length (-shortest).
+        # Synthesise a silent stereo track and trim everything to the exact video length.
         args = [cfg.ffmpeg, "-y", "-i", src,
                 "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
-                "-vf", vf, "-map", "0:v:0", "-map", "1:a:0", "-shortest",
+                "-vf", vf, "-map", "0:v:0", "-map", "1:a:0", "-t", dur,
                 *common_v, *common_a, "-movflags", "+faststart", dst]
     broll._run_ffmpeg(args, cfg.timeout_sec)
 
