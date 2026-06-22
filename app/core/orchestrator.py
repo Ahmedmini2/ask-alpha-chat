@@ -999,6 +999,11 @@ async def chat_turn(
     conv_id = conv.id
     history = await _load_history(db, conv_id)
     user_msg = await _insert_message(db, conv_id, "user", user_message, cards=None)
+    # Capture the id as a plain int NOW, while the session is clean. The orphan-cleanup
+    # below runs db.rollback(), which EXPIRES this ORM object; touching user_msg.id after
+    # that triggers a lazy reload outside the async greenlet -> MissingGreenlet, which would
+    # mask the REAL error from the tool loop (e.g. a Bedrock failure). A plain int is safe.
+    user_msg_id = user_msg.id
 
     messages = history + [{"role": "user", "content": [{"text": user_message}]}]
     ctx = {
@@ -1021,11 +1026,11 @@ async def chat_turn(
         try:
             await db.rollback()  # recover the session if a tool aborted the transaction
             await db.execute(
-                AskAlphaMessage.__table__.delete().where(AskAlphaMessage.id == user_msg.id)
+                AskAlphaMessage.__table__.delete().where(AskAlphaMessage.id == user_msg_id)
             )
             await db.commit()
         except Exception:
-            log.exception("failed to clean up orphan user message %s", user_msg.id)
+            log.exception("failed to clean up orphan user message %s", user_msg_id)
         raise
     cards = _build_cards(tool_calls)
 
