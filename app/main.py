@@ -20,9 +20,11 @@ log = logging.getLogger("askalpha.http")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     poller_task: asyncio.Task | None = None
-    if settings.heygen_api_key:
+    if settings.heygen_api_key and settings.run_heygen_poller:
         poller_task = asyncio.create_task(heygen_poller.run_forever())
         log.info("HeyGen poller task spawned")
+    elif not settings.run_heygen_poller:
+        log.info("RUN_HEYGEN_POLLER=false; poller not started here (runs in the worker task)")
     else:
         log.info("HEYGEN_API_KEY not set; skipping HeyGen poller")
     try:

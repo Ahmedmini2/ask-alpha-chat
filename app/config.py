@@ -143,6 +143,13 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     app_env: str = "development"
 
+    # Run the in-process HeyGen poller in THIS process. Keep True for a single combined
+    # process (local / Railway). On ECS the API runs with this False — so N autoscaled API
+    # tasks don't each poll — and the poller runs in ONE dedicated worker task instead. The
+    # poller MUST stay a singleton: multiple instances duplicate Descript/caption jobs and
+    # race the videos table. The Telegram bot process never imports app.main, so it's unaffected.
+    run_heygen_poller: bool = True
+
     # Database (components, not full URL — avoids encoding issues)
     db_host: str = ""
     db_port: int = 5432

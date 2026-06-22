@@ -1,0 +1,45 @@
+# Single-server deployment: API + poller worker + Telegram bot + Caddy (auto-HTTPS).
+# Run on ONE EC2 box from this folder:  sudo docker compose up -d --build
+name: askalpha
+
+services:
+  api:
+    build: ..                      # builds the Dockerfile in the repo root
+    image: askalpha:latest
+    restart: always
+    env_file: .env.production
+    environment:
+      RUN_HEYGEN_POLLER: "false"   # the worker runs the poller, not the API
+    expose:
+      - "8000"
+    command: sh -c "uvicorn app.main:app --host 0.0.0.0 --port 8000 --loop asyncio"
+
+  worker:                          # the singleton HeyGen poller (captions, b-roll, delivery)
+    image: askalpha:latest
+    restart: always
+    env_file: .env.production
+    command: python -m app.workers.run_poller
+    depends_on: [api]
+
+  bot:                             # the Telegram bot
+    image: askalpha:latest
+    restart: always
+    env_file: .env.production
+    command: python -m app.integrations.telegram.bot
+    depends_on: [api]
+
+  caddy:                           # gives you automatic HTTPS for your API domain
+    image: caddy:2
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [api]
+
+volumes:
+  caddy_data:
+  caddy_config:
