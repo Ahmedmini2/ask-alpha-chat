@@ -24,7 +24,8 @@ balancers, no Fargate, no IAM task roles.
    (same region as your database — this is the whole point).
 2. Search **EC2** → open it → **Launch instance**.
 3. **Name:** `askalpha`.
-4. **OS image (AMI):** Ubuntu Server 24.04 LTS.
+4. **OS image (AMI):** Ubuntu Server 24.04 LTS or Amazon Linux 2023 (both work — Part D has
+   commands for each).
 5. **Instance type (fast):** `c7i.2xlarge` (8 vCPU / 16 GB, newest Intel). If it isn't listed,
    use `c6i.2xlarge` or `m6i.2xlarge`. Want more: `c7i.4xlarge` (16 vCPU / 32 GB). Avoid the
    burstable `t3`/`t3a` family for sustained video encoding. Resize anytime via Stop → Change
@@ -46,9 +47,26 @@ EC2 console → select the instance → **Connect** → tab **EC2 Instance Conne
 A black terminal opens in your browser. Everything below is pasted there.
 
 ## Part D — Install Docker + Git
+
+**Amazon Linux 2023** (prompt shows `ec2-user@`):
+```bash
+sudo dnf install -y docker git
+sudo systemctl enable --now docker
+sudo mkdir -p /usr/local/lib/docker/cli-plugins
+sudo curl -SL https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64 \
+  -o /usr/local/lib/docker/cli-plugins/docker-compose
+sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+```
+
+**Ubuntu** (prompt shows `ubuntu@`):
 ```bash
 curl -fsSL https://get.docker.com | sudo sh
 sudo apt-get install -y git
+```
+
+Verify either way:
+```bash
+sudo docker --version && sudo docker compose version
 ```
 
 ## Part E — Get the code
