@@ -11,7 +11,7 @@ from sqlalchemy import select, insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.core.profiles import (
-    get_profile, is_agent, get_heygen_avatar, heygen_avatar_status_error,
+    get_profile, is_agent,
 )
 from app.db.models import AskAlphaMessage, Project, Video
 from app.integrations import bedrock_images, heygen
@@ -327,58 +327,31 @@ _AV_UNSET = object()  # sentinel: caller didn't pass a pre-fetched heygen_avatar
 
 
 async def _resolve_self_avatar(db: AsyncSession, profile, user_id, av=_AV_UNSET) -> tuple[Optional[list], Optional[dict], dict]:
-    """Resolve the avatar LOOKS for the signed-in user — and ONLY them. Never another person's.
+    """Resolve the avatar LOOKS for the signed-in user — and ONLY them — by NAME, from HeyGen.
 
-    Priority:
-      1) the user's connected HeyGen avatar in `heygen_avatars` (authoritative — keyed by user_id).
-         When such a row exists it is the single source of truth: if it isn't render-ready we fail
-         with a clear reason rather than fall through to name-matching (which could resolve a
-         different person's avatar).
-      2) legacy users with no connected row: a HeyGen avatar group whose name SAFELY matches the
-         user's OWN profile/email name (exact or unambiguous token-subset — never a shared first
-         name, so it can't resolve a teammate who happens to share a first name).
-
-    `av` may be a pre-fetched `heygen_avatars` row (the handler already loads one for the guard) to
-    avoid a second query; omit it to fetch here. Returns (looks, error_dict, meta) — exactly one of
-    looks / error_dict is non-None. `meta` carries `display_name`, `source`, and the `avatar` row."""
-    if av is _AV_UNSET:
-        av = await get_heygen_avatar(db, user_id)
-    display_name = _self_display_name(profile, av)
-    meta = {"display_name": display_name, "source": None, "avatar": av}
-
-    if av is not None:
-        status_err = heygen_avatar_status_error(av)
-        if status_err:
-            return None, {"error": status_err}, meta
-        try:
-            looks = await heygen.looks_for_connected_avatar(
-                av.group_id, av.avatar_id, av.preview_image_url, display_name or "your avatar"
-            )
-        except heygen.HeyGenError as e:
-            log.error("HeyGen connected-avatar lookup failed for %s: %s", user_id, e)
-            return None, {"error": f"Couldn't reach HeyGen to load your avatar: {e}"}, meta
-        if looks:
-            meta["source"] = "connected"
-            return looks, None, meta
-        return None, {"error": "Your connected avatar returned no usable looks from HeyGen. "
-                               "Please re-record it in Alpha Chat → Settings."}, meta
-
-    # No connected record — legacy path, matched on the user's OWN name only (SAFELY — exact /
-    # unambiguous, never a shared first-name token; see heygen.list_looks_for_self).
+    HeyGen is the single source of truth: we do NOT consult the `heygen_avatars` table. We take the
+    signed-in agent's OWN name (their profile name, else the email-local part) and look for a HeyGen
+    avatar under that name; if one exists we use it, otherwise the agent has no avatar to generate
+    with. The match is SAFE — exact / unambiguous against the account's avatar groups, then flat
+    avatars, never a shared first-name token — so it can't resolve a teammate who merely shares a
+    first name. `db`/`user_id`/`av` are kept for signature compatibility but unused. Returns
+    (looks, error_dict, meta) — exactly one of looks / error_dict is non-None."""
+    display_name = _self_display_name(profile, None)
+    meta = {"display_name": display_name, "source": None, "avatar": None}
     if not display_name:
-        return None, {"error": "No AI avatar is connected to your account. Record one in Alpha Chat "
-                               "→ Settings to create your avatar, then try again."}, meta
-    identity = _self_identity_tokens(profile, av) | {_norm_name(display_name)}
+        return None, {"error": "We couldn't determine your name to look up your AI avatar — "
+                               "set a name on your profile and try again."}, meta
+    identity = _self_identity_tokens(profile, None) | {_norm_name(display_name)}
     try:
         looks = await heygen.list_looks_for_self(identity, display_name)
     except heygen.HeyGenError as e:
-        log.error("HeyGen name lookup failed for %r: %s", display_name, e)
+        log.error("HeyGen avatar name lookup failed for %r: %s", display_name, e)
         return None, {"error": f"Couldn't reach HeyGen to look up your avatar: {e}"}, meta
     if looks:
         meta["source"] = "name-match"
         return looks, None, meta
-    return None, {"error": f"No AI avatar found for your account ({display_name!r}). Record one in "
-                           "Alpha Chat → Settings to create your avatar."}, meta
+    return None, {"error": f"No AI avatar found in HeyGen under your name ({display_name!r}). "
+                           "An avatar with your name must exist in HeyGen to generate a video."}, meta
 
 
 async def _resolve_voice(agent_name: str, look: Optional[dict]) -> tuple[Optional[dict], str, list[str]]:
@@ -537,13 +510,10 @@ async def create_promo_video_handler(db: AsyncSession, args: dict, ctx: dict) ->
     if not is_agent(profile):
         return {"error": "This feature is only available to agents."}
 
-    # The video ALWAYS uses the signed-in user's OWN avatar — never anyone else's. A user can
-    # only generate as themselves: the avatar is resolved from their user_id (their connected
-    # `heygen_avatars` row) or, for legacy users, a group bearing their own profile name. We load
-    # the connected row ONCE and reuse it for both the cross-person guard and the resolver.
-    av = await get_heygen_avatar(db, user_id)
+    # The video ALWAYS uses the signed-in user's OWN avatar — never anyone else's. We resolve it by
+    # NAME straight from HeyGen (not the heygen_avatars table): an avatar under the agent's own name.
     requested_name = (args.get("agent_name") or "").strip()
-    if _agent_name_targets_other(requested_name, profile, av):
+    if _agent_name_targets_other(requested_name, profile, None):
         return {"error": f"You can only generate a promo video with your OWN AI avatar, not "
                          f"{requested_name!r}'s. Each agent's avatar is tied to their account — "
                          "ask them to generate their own video."}
@@ -552,7 +522,7 @@ async def create_promo_video_handler(db: AsyncSession, args: dict, ctx: dict) ->
     if project_err:
         return project_err
 
-    looks, looks_err, meta = await _resolve_self_avatar(db, profile, user_id, av=av)
+    looks, looks_err, meta = await _resolve_self_avatar(db, profile, user_id)
     if looks_err:
         return looks_err
     target_name = meta["display_name"]
@@ -853,10 +823,10 @@ async def create_cinematic_video_handler(db: AsyncSession, args: dict, ctx: dict
     if not is_agent(profile):
         return {"error": "This feature is only available to agents."}
 
-    # Same hard rule as the scripted promo: the clip ALWAYS uses the signed-in agent's OWN avatar.
-    av = await get_heygen_avatar(db, user_id)
+    # Same hard rule as the scripted promo: the clip ALWAYS uses the signed-in agent's OWN avatar,
+    # resolved by NAME from HeyGen (not the heygen_avatars table).
     requested_name = (args.get("agent_name") or "").strip()
-    if _agent_name_targets_other(requested_name, profile, av):
+    if _agent_name_targets_other(requested_name, profile, None):
         return {"error": f"You can only generate a cinematic video with your OWN AI avatar, not "
                          f"{requested_name!r}'s. Each agent's avatar is tied to their account."}
 
@@ -864,7 +834,7 @@ async def create_cinematic_video_handler(db: AsyncSession, args: dict, ctx: dict
     if project_err:
         return project_err
 
-    looks, looks_err, meta = await _resolve_self_avatar(db, profile, user_id, av=av)
+    looks, looks_err, meta = await _resolve_self_avatar(db, profile, user_id)
     if looks_err:
         return looks_err
     target_name = meta["display_name"]
@@ -1119,17 +1089,16 @@ async def list_avatar_looks_handler(db: AsyncSession, args: dict, ctx: dict) -> 
     if not is_agent(profile):
         return {"error": "This feature is only available to agents."}
 
-    # Always the signed-in user's OWN avatar. Reject an explicit name that points at someone else.
-    # Load the connected row once and reuse it for the guard and the resolver.
-    av = await get_heygen_avatar(db, user_id)
+    # Always the signed-in user's OWN avatar, resolved by NAME from HeyGen (not the heygen_avatars
+    # table). Reject an explicit name that points at someone else.
     requested_name = (args.get("agent_name") or "").strip()
-    if _agent_name_targets_other(requested_name, profile, av):
+    if _agent_name_targets_other(requested_name, profile, None):
         return {"error": f"You can only view and use your OWN AI avatar, not {requested_name!r}'s. "
                          "Each agent's avatar is tied to their account."}
     project_id = args.get("project_id")
     project_name = args.get("project_name")  # carried through to create_promo_video
 
-    looks, looks_err, meta = await _resolve_self_avatar(db, profile, user_id, av=av)
+    looks, looks_err, meta = await _resolve_self_avatar(db, profile, user_id)
     if looks_err:
         return looks_err
     target_name = meta["display_name"]

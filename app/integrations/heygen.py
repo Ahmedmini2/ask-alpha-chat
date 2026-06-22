@@ -267,9 +267,17 @@ async def list_looks_for_self(identity_names: set[str], person: str) -> list[dic
         looks = []  # fall back to the flat avatar below
 
     if not looks:
-        # No group: use a flat standard avatar, matched EXACTLY (no first-token guessing).
+        # No group: try a flat standard avatar, matched EXACTLY (no first-token guessing).
+        # This scans the whole account avatar list (/v2/avatars), which is large and can time
+        # out. A user with simply NO avatar (e.g. one who never recorded one in Settings) has no
+        # match here anyway, so treat any HeyGen error as "no avatar" — the caller then tells them
+        # to record one — rather than surfacing a misleading "couldn't reach HeyGen / try later".
         norm_names = {_normalize_name(n) for n in names}
-        for a in await list_avatars():
+        try:
+            flat_avatars = await list_avatars()
+        except HeyGenError:
+            flat_avatars = []
+        for a in flat_avatars:
             if _normalize_name(a.get("avatar_name", "")) in norm_names:
                 looks = [{
                     "avatar_id": a["avatar_id"],
