@@ -29,7 +29,10 @@ def _normalize_name(s: str) -> str:
 
 async def list_avatars() -> list[dict]:
     async with _client() as c:
-        r = await c.get("/v2/avatars")
+        try:
+            r = await c.get("/v2/avatars")
+        except httpx.HTTPError as e:
+            raise HeyGenError(f"avatars transport error: {type(e).__name__}: {e}".rstrip(": ")) from e
         if r.status_code >= 400:
             raise HeyGenError(f"avatars failed {r.status_code}: {r.text}")
         data = r.json().get("data") or {}
@@ -38,7 +41,10 @@ async def list_avatars() -> list[dict]:
 
 async def list_voices() -> list[dict]:
     async with _client() as c:
-        r = await c.get("/v2/voices")
+        try:
+            r = await c.get("/v2/voices")
+        except httpx.HTTPError as e:
+            raise HeyGenError(f"voices transport error: {type(e).__name__}: {e}".rstrip(": ")) from e
         if r.status_code >= 400:
             raise HeyGenError(f"voices failed {r.status_code}: {r.text}")
         data = r.json().get("data") or {}
@@ -79,7 +85,13 @@ async def find_voice_by_name(name: str) -> Optional[dict]:
 
 async def list_avatar_groups() -> list[dict]:
     async with _client() as c:
-        r = await c.get("/v2/avatar_group.list")
+        try:
+            r = await c.get("/v2/avatar_group.list")
+        except httpx.HTTPError as e:
+            # A timeout/transport error here stringifies to '' and is NOT a HeyGenError, so it
+            # escaped every caller guard and surfaced as an opaque "Tool execution failed:".
+            # Re-raise as HeyGenError so _resolve_self_avatar reports it cleanly and retryably.
+            raise HeyGenError(f"avatar_group.list transport error: {type(e).__name__}: {e}".rstrip(": ")) from e
         if r.status_code >= 400:
             raise HeyGenError(f"avatar_group.list failed {r.status_code}: {r.text[:200]}")
         data = r.json().get("data") or {}
@@ -88,7 +100,10 @@ async def list_avatar_groups() -> list[dict]:
 
 async def list_group_looks(group_id: str) -> list[dict]:
     async with _client() as c:
-        r = await c.get(f"/v2/avatar_group/{group_id}/avatars")
+        try:
+            r = await c.get(f"/v2/avatar_group/{group_id}/avatars")
+        except httpx.HTTPError as e:
+            raise HeyGenError(f"group looks transport error: {type(e).__name__}: {e}".rstrip(": ")) from e
         if r.status_code >= 400:
             raise HeyGenError(f"group looks failed {r.status_code}: {r.text[:200]}")
         data = r.json().get("data") or {}

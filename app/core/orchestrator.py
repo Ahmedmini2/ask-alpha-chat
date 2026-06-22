@@ -885,14 +885,20 @@ async def _run_tool_loop(db: AsyncSession, messages: list[dict], ctx: dict) -> t
                     try:
                         result = await tool.handler(db, tu.get("input", {}), ctx)
                     except Exception as e:
+                        # Log the FULL traceback + exception type. Timeout-class errors
+                        # (TimeoutError, httpx ReadTimeout) stringify to '' , so str(e) alone
+                        # produced a useless "Tool execution failed:" with no detail — log.exception
+                        # captures the real stack and the type name so the cause is debuggable.
+                        log.exception("tool %s raised", tu["name"])
                         # If a tool query aborts the Postgres transaction, every subsequent
                         # statement on this session fails. Rollback so the assistant message
                         # insert (and any later tool calls) still go through.
                         try:
                             await db.rollback()
                         except Exception:
-                            pass
-                        result = {"error": f"Tool execution failed: {e}"}
+                            log.exception("rollback after tool failure also failed")
+                        detail = str(e) or type(e).__name__
+                        result = {"error": f"Tool execution failed: {detail}"}
                 summary = _summarize_tool_result(tu["name"], result)
                 log.info("tool %s input=%s → %s", tu["name"], tu.get("input", {}), summary)
                 captured.append({"name": tu["name"], "input": tu.get("input", {}), "result": result})
