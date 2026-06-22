@@ -1,6 +1,6 @@
-# Replace api.example.com with YOUR API domain.
+# Replace api.askdada.ai with YOUR API domain.
 # An "A" DNS record for this domain must point at the EC2 server's public IP, and ports
 # 80 + 443 must be open. Caddy then fetches and renews a free HTTPS certificate by itself.
-api.example.com {
+api.askdada.ai {
     reverse_proxy api:8000
 }

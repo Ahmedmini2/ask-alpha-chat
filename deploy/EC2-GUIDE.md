@@ -12,7 +12,7 @@ balancers, no Fargate, no IAM task roles.
 
 ## Before you start you need
 1. An **AWS account** (https://aws.amazon.com → "Create an AWS Account").
-2. A **domain for the API** where you can add a DNS record, e.g. `api.allegiance.ae`.
+2. A **domain for the API** where you can add a DNS record, e.g. `api.askdada.ai`.
    (Required for HTTPS — your Vercel site is HTTPS and can't call a plain-HTTP API.)
 3. Your **AWS access keys** (the same ones set on Railway) and all the API keys/passwords.
 4. The code **pushed to GitHub** with the latest changes (ask Claude to do this).
@@ -39,7 +39,7 @@ balancers, no Fargate, no IAM task roles.
 9. **Launch instance.** Open the instance and copy its **Public IPv4 address**.
 
 ## Part B — Point your domain at the server
-In your DNS provider, add an **A record**: name `api` (→ `api.allegiance.ae`), value = the
+In your DNS provider, add an **A record**: name `api` (→ `api.askdada.ai`), value = the
 server's Public IPv4. Save. (DNS can take a few minutes to a couple of hours.)
 
 ## Part C — Open the server terminal
@@ -90,7 +90,7 @@ Replace every `REPLACE` with your real value. Save with **Ctrl+O**, Enter, then 
 ```bash
 nano Caddyfile
 ```
-Change `api.example.com` to your real domain (e.g. `api.allegiance.ae`). Save & exit.
+Change `api.example.com` to your real domain (e.g. `api.askdada.ai`). Save & exit.
 
 ## Part H — Start everything
 ```bash
@@ -104,7 +104,7 @@ sudo docker compose logs -f api # watch startup; Ctrl+C to stop watching
 
 ## Part I — Verify
 ```bash
-curl https://api.allegiance.ae/health
+curl https://api.askdada.ai/health
 ```
 You should get a small JSON OK. Also confirm the worker log shows
 "HeyGen poller worker starting":
@@ -114,7 +114,7 @@ sudo docker compose logs worker | tail
 
 ## Part J — Point the website at the new API
 In Vercel → your project → Settings → Environment Variables, set the API base URL to
-`https://api.allegiance.ae` and redeploy the site. Test login + a chat + a video.
+`https://api.askdada.ai` and redeploy the site. Test login + a chat + a video.
 
 ## Part K — Turn off Railway
 Once the new server works, stop the Railway services. Keep them for ~a day as a fallback.
