@@ -1,19 +1,18 @@
 """Tests for Cinematic (Seedance) video mode: the create_cinematic_video handler (own-avatar
 enforcement, required spoken line, DEFAULT-avatar selection with no look question, forced
 15s/outro/mode, reference attachment + avatar-only retry), the heygen payload shape, the reference
-builder (re-encode to JPEG + upload to HeyGen), and the poller branch that skips b-roll."""
+builder (re-encode to JPEG + upload to HeyGen), and the poller branch that skips b-roll.
+
+Cinematic is a SINGLE ~15s clip (no stitching / multi-clip / length question)."""
 import uuid
-from pathlib import Path
 import pytest
 
 import app.tools.videos as videos
 import app.workers.heygen_poller as poller
-import app.videos.stitch as stitch
 from app.tools.videos import (
     create_cinematic_video_handler,
     _compose_cinematic_prompt,
     _project_reference_urls,
-    _split_script,
 )
 from app.integrations import heygen
 
@@ -79,33 +78,26 @@ def _agent(monkeypatch):
     monkeypatch.setattr(videos, "get_heygen_avatar", fake_get_avatar)
 
 
-def _stub_pipeline(monkeypatch, *, looks=None, refs=None, capture=None, calls=None, ref_calls=None):
-    """Stub project + avatar resolution + reference building, and capture the heygen call(s). The
+def _stub_pipeline(monkeypatch, *, looks=None, refs=None, capture=None):
+    """Stub project + avatar resolution + reference building, and capture the heygen call. The
     resolver echoes the pre-fetched `av` into meta (as the real one does), so the handler's
-    default-avatar selection has a connected avatar_id to prefer. `capture` gets the LAST generate
-    call; `calls` (if given) collects EVERY generate call; `ref_calls` counts reference-builder calls."""
+    default-avatar selection has a connected avatar_id to prefer. `capture` gets the generate call."""
     looks = looks or [{"avatar_id": "av1", "look_name": "Original", "is_photo": True}]
     refs = refs if refs is not None else ["https://heygen/asset/1", "https://heygen/asset/2"]
-    counter = {"n": 0}
 
     async def fake_resolve_project(_db, _args):
         return FakeProject(), None
     async def fake_resolve_self(_db, _profile, _uid, av=None):
         return looks, None, {"display_name": "Zain Ul Abdeen", "source": "connected", "avatar": av}
     async def fake_refs(_db, _project, k=4):
-        if ref_calls is not None:
-            ref_calls.append(1)
         return list(refs)
     async def fake_generate(prompt, avatar_ids, reference_urls=None, aspect_ratio=None,
                             resolution=None, duration=None, title=None):
-        counter["n"] += 1
         rec = dict(prompt=prompt, avatar_ids=avatar_ids, reference_urls=reference_urls,
                    aspect_ratio=aspect_ratio, resolution=resolution, duration=duration, title=title)
         if capture is not None:
             capture.update(rec)
-        if calls is not None:
-            calls.append(rec)
-        return f"heygen_cine_{counter['n']}"
+        return "heygen_cine_1"
 
     monkeypatch.setattr(videos, "_resolve_project", fake_resolve_project)
     monkeypatch.setattr(videos, "_resolve_self_avatar", fake_resolve_self)
@@ -192,6 +184,7 @@ async def test_cinematic_forces_mode_outro_duration_and_avatar(monkeypatch, _age
     assert out["status"] == "processing"
     assert out["video_id"] == str(new_id)
     assert out["reference_photos"] == 2
+    assert "clips" not in out                     # single clip — no stitching
     assert cap["avatar_ids"] == ["av1"]
     assert cap["duration"] == 15
     assert cap["aspect_ratio"] == "9:16"
@@ -361,7 +354,6 @@ async def test_generate_cinematic_requires_an_avatar_id(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_poller_skips_broll_for_cinematic(monkeypatch):
-    import app.workers.heygen_poller as poller
     calls = {"broll": 0, "finalized": 0}
 
     async def fake_broll(*_a, **_k):
@@ -400,155 +392,9 @@ async def test_poller_runs_broll_for_avatar_mode(monkeypatch):
     assert calls["broll"] == 1          # scripted mode still runs b-roll
 
 
-# ============================ multi-clip cinematic (15/30/45s) ============================
-
-_SCRIPT_3 = ("Welcome to Arancia Yards. Modern apartments and world-class amenities sit in "
-             "the heart of Dubai. Smart design meets real investment potential. Submit your "
-             "interest today. Priority access is open now. Don't miss this launch.")
-
-
-@pytest.mark.asyncio
-async def test_cinematic_15s_one_clip_no_segments(monkeypatch, _agent):
-    calls, ref_calls = [], []
-    _stub_pipeline(monkeypatch, calls=calls, ref_calls=ref_calls)
-    out = await create_cinematic_video_handler(
-        FakeSession(uuid.uuid4()),
-        {"project_name": "X", "spoken_line": "A short line.", "length_seconds": 15}, _ctx())
-    assert out["clips"] == 1 and out["duration_seconds"] == 15
-    assert len(calls) == 1                      # one HeyGen clip
-    assert len(ref_calls) == 1                  # references uploaded once
-    assert calls[0]["duration"] == 15
-
-
-@pytest.mark.asyncio
-async def test_cinematic_30s_generates_two_clips_reusing_refs(monkeypatch, _agent):
-    calls, ref_calls = [], []
-    _stub_pipeline(monkeypatch, calls=calls, ref_calls=ref_calls)
-    out = await create_cinematic_video_handler(
-        FakeSession(uuid.uuid4()),
-        {"project_name": "X", "spoken_line": _SCRIPT_3, "length_seconds": 30}, _ctx())
-    assert out["clips"] == 2 and out["duration_seconds"] == 30
-    assert len(calls) == 2                       # two HeyGen clips
-    assert len(ref_calls) == 1                   # references uploaded ONCE, reused across clips
-    # both clips share the same avatar, refs, aspect, duration
-    assert all(c["avatar_ids"] == ["av1"] for c in calls)
-    assert all(c["duration"] == 15 for c in calls)
-    assert all(c["reference_urls"] == ["https://heygen/asset/1", "https://heygen/asset/2"] for c in calls)
-    # the script is split across the two clips (different spoken lines in each prompt)
-    assert calls[0]["prompt"] != calls[1]["prompt"]
-
-
-@pytest.mark.asyncio
-async def test_cinematic_45s_generates_three_clips(monkeypatch, _agent):
-    calls = []
-    _stub_pipeline(monkeypatch, calls=calls)
-    out = await create_cinematic_video_handler(
-        FakeSession(uuid.uuid4()),
-        {"project_name": "X", "spoken_line": _SCRIPT_3, "length_seconds": 45}, _ctx())
-    assert out["clips"] == 3 and out["duration_seconds"] == 45
-    assert len(calls) == 3
-
-
-@pytest.mark.asyncio
-async def test_cinematic_invalid_length_defaults_to_15(monkeypatch, _agent):
-    calls = []
-    _stub_pipeline(monkeypatch, calls=calls)
-    out = await create_cinematic_video_handler(
-        FakeSession(uuid.uuid4()),
-        {"project_name": "X", "spoken_line": _SCRIPT_3, "length_seconds": 60}, _ctx())
-    assert out["duration_seconds"] == 15 and out["clips"] == 1 and len(calls) == 1
-
-
-# ------------------------------- _split_script (pure) -------------------------------
-
-@pytest.mark.parametrize("n", [1, 2, 3])
-def test_split_script_returns_n_nonempty_parts(n):
-    parts = _split_script(_SCRIPT_3, n)
-    assert len(parts) == n
-    assert all(p.strip() for p in parts)               # never an empty clip
-    # order preserved: concatenation contains the first and last words in order
-    assert parts[0].startswith("Welcome")
-    assert parts[-1].endswith("launch.")
-
-
-def test_split_script_no_sentence_breaks_word_splits():
-    parts = _split_script("one two three four five six", 3)
-    assert [len(p.split()) for p in parts] == [2, 2, 2]
-
-
-# ------------------------------- stitch.concat_clips -------------------------------
-
-@pytest.mark.asyncio
-async def test_concat_clips_crossfades_video_hardjoins_audio(monkeypatch):
-    captured = {}
-
-    def fake_probe(path, cfg):
-        return (1080, 1920, 30.0, 15.0)
-    def fake_normalize(src, dst, w, h, fps, cfg):
-        Path(dst).write_bytes(b"N")                    # create the normalized file
-    def fake_run(args, timeout):
-        captured["args"] = args
-        Path(args[-1]).write_bytes(b"STITCHED")        # ffmpeg writes the output (last arg)
-    monkeypatch.setattr(stitch.broll, "_probe", fake_probe)
-    monkeypatch.setattr(stitch.outro, "_normalize", fake_normalize)
-    monkeypatch.setattr(stitch.broll, "_run_ffmpeg", fake_run)
-
-    out = await stitch.concat_clips([b"a", b"b", b"c"])
-    assert out == b"STITCHED"
-    fc = " ".join(captured["args"])
-    assert "xfade=transition=fade" in fc               # VIDEO is crossfaded
-    assert fc.count("xfade") == 2                       # 3 clips → 2 joins
-    assert "concat=n=3:v=0:a=1" in fc                   # AUDIO is hard-joined (no speech overlap)
-    assert "atrim=end=14.600" in fc                     # non-final clips trimmed by the 0.4s xfade
-
-
-@pytest.mark.asyncio
-async def test_concat_clips_falls_back_to_hardcut_on_xfade_failure(monkeypatch):
-    runs = []
-
-    def fake_probe(path, cfg):
-        return (1080, 1920, 30.0, 15.0)
-    def fake_normalize(src, dst, w, h, fps, cfg):
-        Path(dst).write_bytes(b"N")
-    def fake_run(args, timeout):
-        runs.append(" ".join(args))
-        if len(runs) == 1:                              # first (crossfade) render fails
-            raise stitch.broll.BrollError("xfade boom")
-        Path(args[-1]).write_bytes(b"HARDCUT")
-    monkeypatch.setattr(stitch.broll, "_probe", fake_probe)
-    monkeypatch.setattr(stitch.outro, "_normalize", fake_normalize)
-    monkeypatch.setattr(stitch.broll, "_run_ffmpeg", fake_run)
-
-    out = await stitch.concat_clips([b"a", b"b", b"c"])
-    assert out == b"HARDCUT"
-    assert "xfade" in runs[0]                           # tried crossfade first
-    assert "concat=n=3:v=1:a=1" in runs[1]              # then fell back to a hard-cut concat
-
-
-@pytest.mark.asyncio
-async def test_concat_clips_single_clip_skips_ffmpeg(monkeypatch):
-    ran = {"n": 0}
-
-    def fake_normalize(src, dst, w, h, fps, cfg):
-        Path(dst).write_bytes(b"ONLY")
-    def fake_run(args, timeout):
-        ran["n"] += 1
-    monkeypatch.setattr(stitch.broll, "_probe", lambda p, c: (1080, 1920, 30.0, 15.0))
-    monkeypatch.setattr(stitch.outro, "_normalize", fake_normalize)
-    monkeypatch.setattr(stitch.broll, "_run_ffmpeg", fake_run)
-
-    out = await stitch.concat_clips([b"only"])
-    assert out == b"ONLY"
-    assert ran["n"] == 0                                # no concat ffmpeg for a single clip
-
-
-@pytest.mark.asyncio
-async def test_concat_clips_empty_raises():
-    with pytest.raises(stitch.StitchError):
-        await stitch.concat_clips([])
-
-
-# ---- regression: normalize must pin duration with -t, never -shortest (the stitch-inflation bug) ----
+# ---- regression: normalize must pin duration with -t, never -shortest (the inflation bug) ----
+# outro._normalize is still used by the outro-append step (append_outro); -shortest + apad/anullsrc
+# (unbounded audio) inflated clip duration non-deterministically. Never reintroduce -shortest here.
 
 def test_normalize_pins_exact_duration_not_shortest_with_audio(monkeypatch):
     from app.videos import outro, broll
@@ -574,49 +420,3 @@ def test_normalize_pins_exact_duration_not_shortest_no_audio(monkeypatch):
     assert "-shortest" not in a
     assert "-t" in a and a[a.index("-t") + 1] == "12.500"
     assert "anullsrc=channel_layout=stereo:sample_rate=44100" in a
-
-
-# --------------------- poller: segment-state + stitch finalizer ---------------------
-
-def test_cinematic_segments_state():
-    done = [{"status": "completed", "video_url": "u1"}, {"status": "completed", "video_url": "u2"}]
-    pending = [{"status": "completed", "video_url": "u1"}, {"status": "processing"}]
-    no_url = [{"status": "completed", "video_url": "u1"}, {"status": "completed"}]  # url not ready
-    failed = [{"status": "failed"}, {"status": "completed", "video_url": "u2"}]
-    assert poller._cinematic_segments_state(done) == "done"
-    assert poller._cinematic_segments_state(pending) == "pending"
-    assert poller._cinematic_segments_state(no_url) == "pending"
-    assert poller._cinematic_segments_state(failed) == "failed"
-
-
-@pytest.mark.asyncio
-async def test_merge_caption_finalize_stitches_then_delegates(monkeypatch):
-    seen = {}
-
-    async def fake_fetch(u):
-        return b"clip:" + u.encode()
-    async def fake_concat(clips, **_k):
-        seen["clips"] = clips
-        return b"MERGED"
-    async def fake_upload(data, name, bucket):
-        seen["uploaded"] = (data, name, bucket)
-        return ("key", "https://s3/stitched.mp4")
-    async def fake_finalize(video_id, raw_url, project_id, tg, script, add_outro, mode):
-        seen["finalize"] = dict(raw_url=raw_url, add_outro=add_outro, mode=mode, script=script)
-    async def fake_pname(_db, _pid):
-        return "Proj"
-    monkeypatch.setattr(poller.broll, "_fetch_bytes", fake_fetch)
-    monkeypatch.setattr(poller.stitch, "concat_clips", fake_concat)
-    monkeypatch.setattr(poller.storage, "upload_mp4", fake_upload)
-    monkeypatch.setattr(poller, "_broll_caption_and_finalize", fake_finalize)
-    monkeypatch.setattr(poller, "_project_name", fake_pname)
-
-    await poller._merge_caption_and_finalize(
-        uuid.uuid4(), ["https://a", "https://b", "https://c"], 1, None, "the full script")
-
-    assert seen["clips"] == [b"clip:https://a", b"clip:https://b", b"clip:https://c"]
-    assert seen["uploaded"][0] == b"MERGED"
-    assert seen["finalize"]["raw_url"] == "https://s3/stitched.mp4"
-    assert seen["finalize"]["add_outro"] is True        # outro ALWAYS appended
-    assert seen["finalize"]["mode"] == "cinematic"      # so b-roll is skipped
-    assert seen["finalize"]["script"] == "the full script"
