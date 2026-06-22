@@ -5,6 +5,7 @@ builder (re-encode to JPEG + upload to HeyGen), and the poller branch that skips
 
 Cinematic is a SINGLE ~15s clip (no stitching / multi-clip / length question)."""
 import uuid
+import httpx
 import pytest
 
 import app.tools.videos as videos
@@ -302,6 +303,97 @@ async def test_project_reference_urls_reencodes_to_jpeg_and_uploads(monkeypatch)
     assert all(ct == "image/jpeg" for _, ct in uploaded)            # always JPEG (Seedance-safe)
 
 
+# --------------------------------- transport-timeout regression (the 504 root cause) ---------------------------------
+# A HeyGen call in the references path (uploading a multi-MB project photo, or the submit) could
+# hang for 60s and raise a bare httpx ReadTimeout/WriteTimeout whose str() is ''. Those are NOT
+# HeyGenError, so they slipped past every `except HeyGenError` guard, propagated to the orchestrator
+# as an opaque "Tool execution failed:", and the model's retry pushed the request past the gateway
+# timeout → 504. These tests pin: (a) transport errors are re-raised as HeyGenError, (b) the
+# reference builder never lets one escape, (c) the handler still falls back to avatar-only.
+
+class _RaisingClient:
+    """An async-context httpx client whose .post() raises a given transport error."""
+    def __init__(self, exc):
+        self._exc = exc
+    async def __aenter__(self):
+        return self
+    async def __aexit__(self, *_a):
+        return False
+    async def post(self, *a, **k):
+        raise self._exc
+
+
+@pytest.mark.asyncio
+async def test_upload_asset_wraps_transport_timeout_as_heygen_error(monkeypatch):
+    monkeypatch.setattr(heygen.settings, "heygen_api_key", "k", raising=False)
+    monkeypatch.setattr(heygen.httpx, "AsyncClient", lambda *a, **k: _RaisingClient(httpx.WriteTimeout("")))
+    with pytest.raises(heygen.HeyGenError) as ei:
+        await heygen.upload_asset(b"bytes", content_type="image/jpeg")
+    assert "transport" in str(ei.value)        # a typed message, not an empty str
+
+
+@pytest.mark.asyncio
+async def test_generate_cinematic_video_wraps_transport_timeout_as_heygen_error(monkeypatch):
+    monkeypatch.setattr(heygen, "_client", lambda: _RaisingClient(httpx.ReadTimeout("")))
+    with pytest.raises(heygen.HeyGenError) as ei:
+        await heygen.generate_cinematic_video("a prompt", ["av1"])
+    assert "transport" in str(ei.value)
+
+
+@pytest.mark.asyncio
+async def test_project_reference_urls_swallows_upload_timeout(monkeypatch):
+    # The exact escape that 504'd prod: upload raises a bare httpx timeout (not HeyGenError).
+    class A:
+        def __init__(self, b, k):
+            self.s3_bucket, self.s3_key = b, k
+    import app.brochures.data as bdata
+    import app.brochures.storage as bstorage
+
+    async def fake_gather(_db, _p):
+        return [A("bk", "k0"), A("bk", "k1")], []
+    async def fake_fetch(_b, _k):
+        return b"raw"
+    def fake_to_jpeg(_raw):
+        return b"jpeg"
+    async def fake_upload(_jpeg, content_type="image/png"):
+        raise httpx.WriteTimeout("")           # bare httpx error, str() == ''
+    monkeypatch.setattr(bdata, "_gather_assets", fake_gather)
+    monkeypatch.setattr(bstorage, "fetch_asset_bytes", fake_fetch)
+    monkeypatch.setattr(videos, "_to_jpeg", fake_to_jpeg)
+    monkeypatch.setattr(videos.heygen, "upload_asset", fake_upload)
+    urls = await _project_reference_urls(object(), FakeProject(), k=3)
+    assert urls == []                          # never raises; the images are simply dropped
+
+
+@pytest.mark.asyncio
+async def test_cinematic_retries_avatar_only_on_reference_timeout(monkeypatch, _agent):
+    # Even a NON-HeyGenError (raw timeout) from the references submit must fall back, not 504.
+    calls = []
+
+    async def fake_resolve_project(_db, _a):
+        return FakeProject(), None
+    async def fake_resolve_self(_db, _p, _u, av=None):
+        return [{"avatar_id": "av1", "look_name": "Original", "is_photo": True}], None, \
+               {"display_name": "Zain", "source": "connected", "avatar": av}
+    async def fake_refs(_db, _p, k=4):
+        return ["https://heygen/asset/1"]
+    async def fake_generate(prompt, avatar_ids, reference_urls=None, **k):
+        calls.append(reference_urls)
+        if reference_urls:
+            raise httpx.ReadTimeout("")        # not a HeyGenError; str() == ''
+        return "vid_ok"
+    monkeypatch.setattr(videos, "_resolve_project", fake_resolve_project)
+    monkeypatch.setattr(videos, "_resolve_self_avatar", fake_resolve_self)
+    monkeypatch.setattr(videos, "_project_reference_urls", fake_refs)
+    monkeypatch.setattr(videos.heygen, "generate_cinematic_video", fake_generate)
+
+    out = await create_cinematic_video_handler(
+        FakeSession(uuid.uuid4()), {"project_name": "X", "spoken_line": "hi"}, _ctx())
+    assert out.get("video_id") and "error" not in out
+    assert out["reference_photos"] == 0
+    assert calls == [["https://heygen/asset/1"], None]
+
+
 # --------------------------------- heygen payload shape ---------------------------------
 
 class _FakeResp:
@@ -319,9 +411,10 @@ class _FakeClient:
         return self
     async def __aexit__(self, *_a):
         return False
-    async def post(self, path, json=None):
+    async def post(self, path, json=None, **kwargs):  # **kwargs mirrors httpx (accepts timeout=)
         self._cap["path"] = path
         self._cap["json"] = json
+        self._cap["kwargs"] = kwargs
         return _FakeResp()
 
 

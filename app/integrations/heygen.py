@@ -461,8 +461,17 @@ async def generate_cinematic_video(
         payload["references"] = [{"type": "url", "url": u} for u in reference_urls if u]
     if title:
         payload["title"] = title
+    # A bare submit returns a video_id in ~1–3s (the render happens async, polled later), so a
+    # short, dedicated timeout is plenty. Critically, ANY transport/timeout error is re-raised as
+    # a HeyGenError: httpx's ReadTimeout/WriteTimeout stringify to '' and are NOT HeyGenError, so
+    # without this they slipped past the caller's `except HeyGenError` fallback and surfaced as an
+    # opaque "Tool execution failed:" that 504'd the whole chat request.
+    submit_timeout = httpx.Timeout(connect=10.0, read=25.0, write=25.0, pool=10.0)
     async with _client() as c:
-        r = await c.post("/v3/videos", json=payload)
+        try:
+            r = await c.post("/v3/videos", json=payload, timeout=submit_timeout)
+        except httpx.HTTPError as e:
+            raise HeyGenError(f"cinematic submit transport error: {type(e).__name__}: {e}".rstrip(": ")) from e
         if r.status_code >= 400:
             raise HeyGenError(f"cinematic generate failed {r.status_code}: {r.text[:400]}")
         data = r.json().get("data") or {}
@@ -476,22 +485,30 @@ async def upload_asset(image_bytes: bytes, content_type: str = "image/png") -> s
     """Upload an image to HeyGen's asset store; returns a URL HeyGen will accept as background."""
     if not settings.heygen_api_key:
         raise HeyGenError("HEYGEN_API_KEY is not configured")
-    async with httpx.AsyncClient(timeout=60.0) as c:
-        r = await c.post(
-            "https://upload.heygen.com/v1/asset",
-            headers={
-                "X-Api-Key": settings.heygen_api_key,
-                "Content-Type": content_type,
-            },
-            content=image_bytes,
-        )
-        if r.status_code >= 400:
-            raise HeyGenError(f"asset upload failed {r.status_code}: {r.text[:300]}")
-        data = (r.json() or {}).get("data") or {}
-        url = data.get("url") or data.get("image_url") or data.get("file_url")
-        if not url:
-            raise HeyGenError(f"no URL in asset response: {r.text[:300]}")
-        return url
+    # Bounded timeout so a stalled upload (multi-MB project photo over a slow uplink) fails fast
+    # AS A HeyGenError — the caller drops the image and proceeds — instead of hanging for 60s and
+    # raising a bare httpx timeout (empty str) that escapes every guard. This was the root cause
+    # of the cinematic 504: the upload here, not the HeyGen API itself, was the hang.
+    timeout = httpx.Timeout(connect=10.0, read=30.0, write=30.0, pool=10.0)
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as c:
+            r = await c.post(
+                "https://upload.heygen.com/v1/asset",
+                headers={
+                    "X-Api-Key": settings.heygen_api_key,
+                    "Content-Type": content_type,
+                },
+                content=image_bytes,
+            )
+    except httpx.HTTPError as e:
+        raise HeyGenError(f"asset upload transport error: {type(e).__name__}: {e}".rstrip(": ")) from e
+    if r.status_code >= 400:
+        raise HeyGenError(f"asset upload failed {r.status_code}: {r.text[:300]}")
+    data = (r.json() or {}).get("data") or {}
+    url = data.get("url") or data.get("image_url") or data.get("file_url")
+    if not url:
+        raise HeyGenError(f"no URL in asset response: {r.text[:300]}")
+    return url
 
 
 async def generate_video_via_agent(

@@ -10,13 +10,22 @@ import re
 import uuid
 
 import boto3
+from botocore.config import Config
 
 from app.config import settings
 
 log = logging.getLogger("askalpha.brochures")
 
 # The assets bucket lives in eu-west-2 (same constraint as Textract ingestion).
-_s3 = boto3.client("s3", region_name=settings.s3_assets_region)
+# Bounded timeouts + capped retries: the default (60s connect/read, legacy retries) let a stalled
+# GetObject hang the caller for a full minute — which, in the cinematic reference path, surfaced as
+# an opaque error and contributed to request timeouts. Fail fast instead; callers treat a missing
+# asset as best-effort.
+_s3 = boto3.client(
+    "s3",
+    region_name=settings.s3_assets_region,
+    config=Config(connect_timeout=10, read_timeout=30, retries={"max_attempts": 2}),
+)
 
 PDF_KEY_PREFIX = "generated/brochures"
 PNG_KEY_PREFIX = "generated/flyers"

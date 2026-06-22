@@ -1,8 +1,14 @@
 # Ask Alpha on ONE AWS server (beginner guide)
 
-The simplest way to run Ask Alpha on AWS: one EC2 server in UAE running all 3 processes
+The simplest way to run Ask Alpha on AWS: one EC2 server running all 3 processes
 (API, video worker, Telegram bot) with Docker, plus Caddy for automatic HTTPS. No load
 balancers, no Fargate, no IAM task roles.
+
+> **Region = Mumbai (`ap-south-1`), NOT UAE.** Your Supabase database lives in Mumbai and
+> Supabase has no Middle East region (verified). Chat speed is dominated by the many DB
+> round-trips per turn, so the app must sit **next to the database** in Mumbai (~1 ms to DB;
+> Dubai users pay one ~35 ms hop). Putting the app in UAE or London would make each of those
+> DB trips slower. See `DB-MIGRATION.md` for the full reasoning and the bigger app-level win.
 
 ## Before you start you need
 1. An **AWS account** (https://aws.amazon.com → "Create an AWS Account").
@@ -14,18 +20,21 @@ balancers, no Fargate, no IAM task roles.
 ---
 
 ## Part A — Launch the server
-1. Sign in to AWS. Top-right region selector → choose **Middle East (UAE) me-central-1**.
+1. Sign in to AWS. Top-right region selector → choose **Asia Pacific (Mumbai) ap-south-1**
+   (same region as your database — this is the whole point).
 2. Search **EC2** → open it → **Launch instance**.
 3. **Name:** `askalpha`.
 4. **OS image (AMI):** Ubuntu Server 24.04 LTS.
-5. **Instance type:** `t3.xlarge` (4 vCPU / 16 GB). You can pick `t3.large` to save money and
-   resize later.
+5. **Instance type (fast):** `c7i.2xlarge` (8 vCPU / 16 GB, newest Intel). If it isn't listed,
+   use `c6i.2xlarge` or `m6i.2xlarge`. Want more: `c7i.4xlarge` (16 vCPU / 32 GB). Avoid the
+   burstable `t3`/`t3a` family for sustained video encoding. Resize anytime via Stop → Change
+   instance type → Start. (Mumbai is a large, mature region — no new-region launch throttling.)
 6. **Key pair:** "Proceed without a key pair" is fine — we'll use the browser terminal.
 7. **Network settings → Edit → Security group**, allow:
    - SSH, port **22**, source **My IP**
    - HTTP, port **80**, source **Anywhere (0.0.0.0/0)**
    - HTTPS, port **443**, source **Anywhere (0.0.0.0/0)**
-8. **Storage:** change to **30 GB** gp3.
+8. **Storage:** change to **50 GB** gp3.
 9. **Launch instance.** Open the instance and copy its **Public IPv4 address**.
 
 ## Part B — Point your domain at the server

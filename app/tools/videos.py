@@ -816,8 +816,12 @@ async def _project_reference_urls(db: AsyncSession, project: Project, k: int = M
             continue
         try:
             urls.append(await heygen.upload_asset(jpeg, content_type="image/jpeg"))
-        except heygen.HeyGenError as e:
-            log.warning("cinematic: reference upload failed (%s); skipping image", e)
+        except Exception as e:
+            # References are decorative — drop this image on ANY failure and keep going. Must be a
+            # broad catch: a bare httpx timeout (str == '') is NOT a HeyGenError, and previously
+            # escaped this loop, propagated out, and 504'd the whole cinematic request.
+            log.warning("cinematic: reference upload failed (%s); skipping image",
+                        e or type(e).__name__)
     return urls
 
 
@@ -887,8 +891,14 @@ async def create_cinematic_video_handler(db: AsyncSession, args: dict, ctx: dict
     if aspect_ratio not in ("9:16", "16:9", "1:1"):
         aspect_ratio = "9:16"
 
-    # Project photos uploaded to HeyGen once and attached as references.
-    reference_urls = await _project_reference_urls(db, project)
+    # Project photos uploaded to HeyGen once and attached as references. Best-effort and defensive:
+    # the avatar renders fine without them, so a slow/failed gather must never sink the job.
+    try:
+        reference_urls = await _project_reference_urls(db, project)
+    except Exception as e:
+        log.warning("cinematic: reference gathering failed (%s); proceeding avatar-only",
+                    e or type(e).__name__)
+        reference_urls = []
     full_prompt = _compose_cinematic_prompt(scene_prompt, spoken_line, project)
 
     async def _submit(refs: Optional[list]) -> str:
@@ -905,21 +915,23 @@ async def create_cinematic_video_handler(db: AsyncSession, args: dict, ctx: dict
     used_refs = bool(reference_urls)
     try:
         heygen_video_id = await _submit(reference_urls)
-    except heygen.HeyGenError as e:
-        # A bad/unsupported reference image must NEVER block generation — retry with the avatar only
-        # (the avatar alone renders fine; we just lose the project photos as scene guides).
+    except Exception as e:
+        # A bad/unsupported reference image — OR a transport timeout uploading/submitting one —
+        # must NEVER block generation: retry with the avatar only (it renders fine; we just lose
+        # the project photos as scene guides). Broad catch is deliberate: httpx timeouts aren't
+        # HeyGenError and previously escaped here, 504-ing the request instead of falling back.
         if reference_urls:
             log.warning("cinematic with %d refs failed (%s); retrying avatar-only",
-                        len(reference_urls), e)
+                        len(reference_urls), e or type(e).__name__)
             try:
                 heygen_video_id = await _submit(None)
                 used_refs = False
-            except heygen.HeyGenError as e2:
-                log.error("HeyGen cinematic generation failed (avatar-only): %s", e2)
-                return {"error": f"Video service error: {e2}"}
+            except Exception as e2:
+                log.error("HeyGen cinematic generation failed (avatar-only): %s", e2 or type(e2).__name__)
+                return {"error": f"Video service error: {e2 or type(e2).__name__}"}
         else:
-            log.error("HeyGen cinematic generation failed: %s", e)
-            return {"error": f"Video service error: {e}"}
+            log.error("HeyGen cinematic generation failed: %s", e or type(e).__name__)
+            return {"error": f"Video service error: {e or type(e).__name__}"}
     if not heygen_video_id:
         return {"error": "HeyGen did not return a video_id."}
 
