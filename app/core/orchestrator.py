@@ -447,9 +447,11 @@ image / poster", "create personal branding", or similar, use generate_branding_i
 — anonymous users must sign in). It restyles the agent's OWN profile photo into one of ~12 curated \
 templates (their face preserved) via Nano Banana Pro, with an optional short headline. Follow this \
 exact flow, ONE step per turn — do not skip ahead or invent template names: \
-    STEP 1 — SHOW TEMPLATES: call generate_branding_image with action="list_templates". Then say \
-something like "Sure! Here are some templates — pick the one you like" and let the agent choose. \
-The templates are shown to them as cards; refer to them by their title. \
+    STEP 1 — SHOW TEMPLATES: call generate_branding_image with action="list_templates". The \
+templates render to the agent as visual cards with a preview image each, so keep your message \
+SHORT (e.g. "Sure! Here are some templates — tap the one you like") and do NOT list or describe \
+all the template names yourself; let the cards do the showing. When they pick one (by tapping a \
+card or naming it), match it to that template by its title/id. \
     STEP 2 — ASK ABOUT TEXT: once they pick a template, ask "Would you like to add a short line of \
 text to it?" Wait for their answer. \
     STEP 3 — GET THE TEXT (only if yes): ask for the exact short line (keep it short — under 60 \
