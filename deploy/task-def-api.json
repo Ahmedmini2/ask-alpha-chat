@@ -21,6 +21,7 @@
         { "name": "BEDROCK_MODEL_ID", "value": "${BEDROCK_MODEL_ID}" },
         { "name": "BEDROCK_EMBED_MODEL_ID", "value": "amazon.titan-embed-text-v2:0" },
         { "name": "S3_ASSETS_REGION", "value": "eu-west-2" },
+        { "name": "GEMINI_IMAGE_MODEL_ID", "value": "gemini-3-pro-image-preview" },
         { "name": "CORS_ORIGINS", "value": "${CORS_ORIGINS}" },
         { "name": "RUN_HEYGEN_POLLER", "value": "false" }
       ],
@@ -37,7 +38,8 @@
         { "name": "FAL_KEY", "valueFrom": "${SECRET_ARN}:FAL_KEY::" },
         { "name": "AYRSHARE_API_KEY", "valueFrom": "${SECRET_ARN}:AYRSHARE_API_KEY::" },
         { "name": "PM_API_KEY", "valueFrom": "${SECRET_ARN}:PM_API_KEY::" },
-        { "name": "PM_COMPANY_KEY", "valueFrom": "${SECRET_ARN}:PM_COMPANY_KEY::" }
+        { "name": "PM_COMPANY_KEY", "valueFrom": "${SECRET_ARN}:PM_COMPANY_KEY::" },
+        { "name": "GOOGLE_AI_STUDIO_API_KEY", "valueFrom": "${SECRET_ARN}:GOOGLE_AI_STUDIO_API_KEY::" }
       ],
       "logConfiguration": {
         "logDriver": "awslogs",

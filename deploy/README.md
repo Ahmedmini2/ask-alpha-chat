@@ -45,7 +45,8 @@ aws secretsmanager create-secret --name askalpha/prod --region $AWS_REGION \
     "DB_USER":"postgres.pqzsdxcjyqjjvfsunzak","DB_PASSWORD":"REPLACE","DB_NAME":"postgres",
     "SUPABASE_URL":"https://pqzsdxcjyqjjvfsunzak.supabase.co",
     "HEYGEN_API_KEY":"REPLACE","TELEGRAM_BOT_TOKEN":"REPLACE","DESCRIPT_API_TOKEN":"REPLACE",
-    "FAL_KEY":"REPLACE","AYRSHARE_API_KEY":"REPLACE","PM_API_KEY":"REPLACE","PM_COMPANY_KEY":"REPLACE"
+    "FAL_KEY":"REPLACE","AYRSHARE_API_KEY":"REPLACE","PM_API_KEY":"REPLACE","PM_COMPANY_KEY":"REPLACE",
+    "GOOGLE_AI_STUDIO_API_KEY":"REPLACE"
   }'
 ```
 > Setting `SUPABASE_URL` turns ON the JWT auth from the earlier fix — make sure the web app

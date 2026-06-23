@@ -1,0 +1,146 @@
+[
+  {
+    "slug": "one-call-away",
+    "file": "one-call-away.jpg",
+    "aspect_ratio": "2:3",
+    "title": "Want to invest? I'm one call away",
+    "original_slogan": "WANT TO INVEST? I'M ONE CALL AWAY",
+    "px": [
+      859,
+      1280
+    ],
+    "kb": 211
+  },
+  {
+    "slug": "brewing-the-deal",
+    "file": "brewing-the-deal.jpg",
+    "aspect_ratio": "2:3",
+    "title": "Brewing the next deal",
+    "original_slogan": "BREWING THE NEXT DEAL",
+    "px": [
+      859,
+      1280
+    ],
+    "kb": 135
+  },
+  {
+    "slug": "refined-precise-trusted",
+    "file": "refined-precise-trusted.jpg",
+    "aspect_ratio": "4:5",
+    "title": "Refined. Precise. Trusted.",
+    "original_slogan": "REFINED. PRECISE. TRUSTED.",
+    "px": [
+      1031,
+      1280
+    ],
+    "kb": 133
+  },
+  {
+    "slug": "aerial-lounge",
+    "file": "aerial-lounge.jpg",
+    "aspect_ratio": "4:5",
+    "title": "Made it look easy",
+    "original_slogan": "",
+    "px": [
+      1031,
+      1280
+    ],
+    "kb": 260
+  },
+  {
+    "slug": "your-move",
+    "file": "your-move.jpg",
+    "aspect_ratio": "3:4",
+    "title": "Your move",
+    "original_slogan": "YOUR MOVE",
+    "px": [
+      956,
+      1280
+    ],
+    "kb": 207
+  },
+  {
+    "slug": "play-to-win",
+    "file": "play-to-win.jpg",
+    "aspect_ratio": "9:16",
+    "title": "Play to win",
+    "original_slogan": "PLAY TO WIN",
+    "px": [
+      714,
+      1280
+    ],
+    "kb": 148
+  },
+  {
+    "slug": "busy-selling",
+    "file": "busy-selling.jpg",
+    "aspect_ratio": "4:5",
+    "title": "Busy selling",
+    "original_slogan": "BUSY SELLING",
+    "px": [
+      1031,
+      1280
+    ],
+    "kb": 107
+  },
+  {
+    "slug": "no-days-off",
+    "file": "no-days-off.jpg",
+    "aspect_ratio": "4:5",
+    "title": "No days off",
+    "original_slogan": "NO DAYS OFF",
+    "px": [
+      1031,
+      1280
+    ],
+    "kb": 108
+  },
+  {
+    "slug": "touch-the-sky",
+    "file": "touch-the-sky.jpg",
+    "aspect_ratio": "4:5",
+    "title": "We make your goals touch the sky",
+    "original_slogan": "WE MAKE YOUR GOALS TOUCH THE SKY",
+    "px": [
+      1031,
+      1280
+    ],
+    "kb": 150
+  },
+  {
+    "slug": "agent-cover",
+    "file": "agent-cover.jpg",
+    "aspect_ratio": "3:4",
+    "title": "Agent. Always on, always closing",
+    "original_slogan": "agent.",
+    "px": [
+      956,
+      1280
+    ],
+    "kb": 146
+  },
+  {
+    "slug": "open-road",
+    "file": "open-road.jpg",
+    "aspect_ratio": "4:5",
+    "title": "Every deal, a new view",
+    "original_slogan": "Some offices have four walls. Ours has an open road.",
+    "px": [
+      1031,
+      1280
+    ],
+    "kb": 223
+  },
+  {
+    "slug": "deal-closed-summer",
+    "file": "deal-closed-summer.jpg",
+    "aspect_ratio": "2:3",
+    "title": "Big deal closed. Summer earned.",
+    "original_slogan": "BIG DEAL CLOSED. SUMMER EARNED.",
+    "px": [
+      859,
+      1280
+    ],
+    "kb": 150
+  }
+]

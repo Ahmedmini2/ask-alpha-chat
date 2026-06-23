@@ -26,6 +26,17 @@ class Settings(BaseSettings):
     bedrock_image_region: str = "us-west-2"
     bedrock_image_model_id: str = "stability.stable-image-core-v1:1"
 
+    # Google Gemini "Nano Banana Pro" image model — personal-branding image generation
+    # (restyle the agent's profile photo to match a chosen template + render an overlay).
+    # Key is GOOGLE_AI_STUDIO_API_KEY (AI Studio / Generative Language API, NOT Vertex).
+    # IMPORTANT: the Gemini *image* models have NO free tier — the Google project behind the
+    # key must have BILLING ENABLED, or calls fail 429 RESOURCE_EXHAUSTED (free-tier limit: 0).
+    google_ai_studio_api_key: str = ""
+    gemini_image_model_id: str = "gemini-3-pro-image-preview"   # Nano Banana Pro
+    gemini_image_size: str = "2K"                               # "1K" | "2K" | "4K" (uppercase K)
+    gemini_image_timeout_sec: int = 120
+    branding_images_enabled: bool = True
+
     # Property Monitor AVM API (valuations + rental/yield data). Two key headers.
     pm_api_key: str = ""
     pm_company_key: str = ""

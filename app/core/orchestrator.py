@@ -29,6 +29,7 @@ import app.tools.comparison  # noqa: F401
 import app.tools.market_report  # noqa: F401
 import app.tools.flyers      # noqa: F401
 import app.tools.social      # noqa: F401
+import app.tools.branding    # noqa: F401
 
 log = logging.getLogger("askalpha.orchestrator")
 
@@ -441,6 +442,30 @@ media_url (set is_video true for a video link that doesn't end in .mp4); schedul
 schedule_date (ISO-8601 UTC). Instagram, TikTok, YouTube and Pinterest require media — a \
 text-only post to those is rejected, so attach media or use a text-friendly network (Facebook, \
 LinkedIn, X). Set confirmed=true ONLY after the user has explicitly approved that exact action.
+- PERSONAL BRANDING IMAGES: when an agent asks to "generate images for me", "make me a branding \
+image / poster", "create personal branding", or similar, use generate_branding_image (agents only \
+— anonymous users must sign in). It restyles the agent's OWN profile photo into one of ~12 curated \
+templates (their face preserved) via Nano Banana Pro, with an optional short headline. Follow this \
+exact flow, ONE step per turn — do not skip ahead or invent template names: \
+    STEP 1 — SHOW TEMPLATES: call generate_branding_image with action="list_templates". Then say \
+something like "Sure! Here are some templates — pick the one you like" and let the agent choose. \
+The templates are shown to them as cards; refer to them by their title. \
+    STEP 2 — ASK ABOUT TEXT: once they pick a template, ask "Would you like to add a short line of \
+text to it?" Wait for their answer. \
+    STEP 3 — GET THE TEXT (only if yes): ask for the exact short line (keep it short — under 60 \
+characters / about 6 words). You may offer the template's suggested line. \
+    STEP 4 — GENERATE: call generate_branding_image with action="generate", template_id=<the chosen \
+id>, and EITHER overlay_text=<their exact words> if they wanted text, OR add_text=false if they did \
+not. You MUST actually call the tool — never claim an image was made without the tool returning \
+status="completed" this turn. \
+  The call is synchronous (~15-40s). After it returns completed, tell them their branding image is \
+ready, but do NOT paste the download URL yourself — the system attaches the exact link automatically \
+(long signed links break if retyped). On Telegram the image is also sent into the chat. \
+  Honor the tool's status: 'templates'/'needs_template' → show the templates and ask them to pick; \
+'needs_text' → ask for the short line; 'text_too_long' → ask them to shorten it; 'completed' → \
+tell them it's ready. If the error mentions the profile picture, tell them to add one in settings; \
+if it mentions billing/quota, tell them an admin must enable Gemini billing. Use \
+action="list_history" if they ask to see their previous branding images.
 """
 
 MAX_TOOL_ITERATIONS = 10  # higher than 5 to accommodate bulk video requests
@@ -629,6 +654,15 @@ def _summarize_tool_result(name: str, result: dict) -> str:
         return (f"project={result.get('project_id')} type={result.get('flyer_type')} "
                 f"status={result.get('status')} telegram={result.get('sent_to_telegram')} "
                 f"url?={bool(result.get('image_url'))}")
+    if name == "generate_branding_image":
+        st = result.get("status")
+        if st in ("templates", "needs_template"):
+            return f"branding status={st} templates={result.get('count') or len(result.get('templates') or [])}"
+        if st == "history":
+            return f"branding history count={result.get('count')}"
+        return (f"branding status={st} template={result.get('template_id')!r} "
+                f"text={result.get('has_text')} telegram={result.get('sent_to_telegram')} "
+                f"url?={bool(result.get('image_url'))}")
     if name == "publish_to_social":
         return (f"social status={result.get('status')} platforms={result.get('platforms')} "
                 f"scheduled={result.get('scheduled')} urls={len(result.get('post_urls') or [])} "
@@ -811,6 +845,31 @@ def _build_cards(tool_calls: list[dict]) -> list[dict]:
                 "filename": result.get("filename"),
                 "sent_to_telegram": result.get("sent_to_telegram"),
             })
+        elif name == "generate_branding_image":
+            status = result.get("status")
+            if status in ("templates", "needs_template"):
+                cards.append({
+                    "type": "branding_templates",
+                    "templates": result.get("templates", []),
+                })
+            elif status == "history":
+                if result.get("images"):
+                    cards.append({
+                        "type": "branding_history",
+                        "images": result.get("images", []),
+                    })
+            elif status == "completed":
+                cards.append({
+                    "type": "branding_image",
+                    "status": status,
+                    "template_id": result.get("template_id"),
+                    "template_title": result.get("template_title"),
+                    "has_text": result.get("has_text"),
+                    "overlay_text": result.get("overlay_text"),
+                    "image_url": result.get("image_url"),
+                    "filename": result.get("filename"),
+                    "sent_to_telegram": result.get("sent_to_telegram"),
+                })
         elif name == "check_my_video_status":
             # 'none' = no video belongs to this chat — emit no card (the reply text carries
             # it) so we never render a misleading "still rendering" panel for a job that
@@ -923,6 +982,7 @@ async def _run_tool_loop(db: AsyncSession, messages: list[dict], ctx: dict) -> t
 # and attaches the byte-exact one instead, on both the chats API and Telegram.
 _FILE_DOWNLOADS: dict[str, tuple[str, str]] = {
     "generate_whatsapp_flyer": ("image_url", "📸 Download flyer"),
+    "generate_branding_image": ("image_url", "🎨 Download image"),
     "generate_mini_brochure": ("pdf_url", "📄 Download brochure"),
     "generate_comparison_pdf": ("pdf_url", "📄 Download comparison"),
     "generate_market_report": ("pdf_url", "📊 Download market report"),

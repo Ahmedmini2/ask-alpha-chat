@@ -56,6 +56,46 @@ def slugify(name: str) -> str:
     return s[:60] or "brochure"
 
 
+def _head_exists(bucket: str, key: str) -> bool:
+    try:
+        _s3.head_object(Bucket=bucket, Key=key)
+        return True
+    except Exception:
+        return False
+
+
+def _presign(bucket: str, key: str) -> str:
+    return _s3.generate_presigned_url(
+        "get_object", Params={"Bucket": bucket, "Key": key}, ExpiresIn=PRESIGN_TTL_SEC,
+    )
+
+
+async def presigned_url(bucket: str, key: str) -> str | None:
+    """Presigned GET URL for an existing object; None on failure."""
+    try:
+        return await asyncio.to_thread(_presign, bucket, key)
+    except Exception as e:
+        log.warning("presign failed s3://%s/%s: %s", bucket, key, e)
+        return None
+
+
+async def ensure_and_presign(
+    bucket: str, key: str, data: bytes, content_type: str = "image/jpeg",
+) -> str | None:
+    """Upload `data` at the exact `key` if it isn't there yet (idempotent), then presign it.
+    Used to self-seed static assets (e.g. branding template thumbnails). None on failure."""
+    def _run() -> str:
+        if not _head_exists(bucket, key):
+            _s3.put_object(Bucket=bucket, Key=key, Body=data, ContentType=content_type)
+        return _presign(bucket, key)
+
+    try:
+        return await asyncio.to_thread(_run)
+    except Exception as e:
+        log.warning("ensure_and_presign failed s3://%s/%s: %s", bucket, key, e)
+        return None
+
+
 async def upload_pdf(pdf_bytes: bytes, project_name: str, bucket: str) -> tuple[str, str]:
     """Store the rendered PDF; returns (s3_key, presigned_url)."""
     key = f"{PDF_KEY_PREFIX}/{slugify(project_name)}-{uuid.uuid4().hex[:8]}.pdf"

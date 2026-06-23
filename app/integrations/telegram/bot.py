@@ -201,6 +201,31 @@ def _format_cards(cards: list[dict]) -> str:
                 lines.append(f"\n📸 *{name} — {label} flyer is ready.*\nDownload: {url}")
             else:
                 lines.append(f"\n📸 The {name} flyer could not be delivered — please try again.")
+        elif kind == "branding_templates":
+            items = c.get("templates") or []
+            if items:
+                lines.append("\n🎨 *Personal-branding templates* — pick one by name:")
+                for t in items:
+                    lines.append(f"  • *{t.get('title')}* — {t.get('description')}")
+        elif kind == "branding_image":
+            title = c.get("template_title") or "Branding image"
+            url = c.get("image_url")
+            sent = c.get("sent_to_telegram")
+            if sent and url:
+                lines.append(f"\n🎨 *Your branding image — {title}* sent above.\nDownload: {url}")
+            elif sent:
+                lines.append(f"\n🎨 *Your branding image — {title}* sent above as an image.")
+            elif url:
+                lines.append(f"\n🎨 *Your branding image — {title} is ready.*\nDownload: {url}")
+            else:
+                lines.append("\n🎨 The branding image could not be delivered — please try again.")
+        elif kind == "branding_history":
+            imgs = c.get("images") or []
+            if imgs:
+                lines.append("\n🎨 *Your branding images:*")
+                for im in imgs:
+                    txt = f" — “{im.get('overlay_text')}”" if im.get("overlay_text") else ""
+                    lines.append(f"  • *{im.get('template_title')}*{txt}")
         elif kind == "comparison_pdf":
             names = c.get("project_names") or []
             title = " vs ".join(names) if names else "Property comparison"

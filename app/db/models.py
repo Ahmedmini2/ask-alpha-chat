@@ -335,6 +335,22 @@ class ProjectAlphaVerdict(Base):
     computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class BrandingImage(Base):
+    """One row per personal-branding image an agent generates (Nano Banana Pro). Gives each
+    agent a gallery/history. Written by the backend; the web app reads an agent's own rows."""
+    __tablename__ = "branding_images"
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    user_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    template_slug: Mapped[str] = mapped_column(Text, nullable=False)
+    overlay_text: Mapped[Optional[str]] = mapped_column(Text)
+    s3_key: Mapped[Optional[str]] = mapped_column(Text)
+    image_url: Mapped[Optional[str]] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="completed")
+    error: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class PmCommunityStats(Base):
     __tablename__ = "pm_community_stats"
 
