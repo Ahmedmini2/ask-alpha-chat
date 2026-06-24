@@ -33,12 +33,18 @@ _render_lock = asyncio.Lock()
 
 
 def _find_vanitas() -> str | None:
+    """The Vanitas font file for templates that load it via the single-weight `vanitas_font`
+    slot (comparison/market_report). The brochure (offplan) and flyer hardcode their own
+    Regular+Bold Vanitas faces, so they don't use this. Match files like
+    'fonnts.com-Vanitas-Bold.otf', preferring a Regular weight for the single-weight slot."""
     fonts = STATIC_DIR / "fonts"
-    for pattern in ("Vanitas*.woff2", "Vanitas*.otf", "Vanitas*.ttf"):
-        hits = sorted(fonts.glob(pattern))
-        if hits:
-            return hits[0].name
-    return None
+    hits = sorted(fonts.glob("*Vanitas*"))
+    if not hits:
+        return None
+    for h in hits:
+        if "regular" in h.name.lower():
+            return h.name
+    return hits[0].name
 
 
 def render_html(template_name: str, context: dict) -> str:

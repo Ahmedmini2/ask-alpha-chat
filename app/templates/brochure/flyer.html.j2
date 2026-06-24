@@ -23,9 +23,8 @@
   --serif-alt:"Playfair Display",Georgia,serif;
   --sans:"Google Sans Flex",system-ui,Arial,sans-serif;
 }
-{% if vanitas_font %}
-@font-face{ font-family:"Vanitas"; src:url("{{ static_dir }}/fonts/{{ vanitas_font }}"); font-weight:400; font-display:block; }
-{% endif %}
+@font-face{ font-family:"Vanitas"; src:url("{{ static_dir }}/fonts/fonnts.com-Vanitas-Regular.otf"); font-weight:400; font-display:block; }
+@font-face{ font-family:"Vanitas"; src:url("{{ static_dir }}/fonts/fonnts.com-Vanitas-Bold.otf"); font-weight:700; font-display:block; }
 @font-face{ font-family:"Marcellus"; src:url("{{ static_dir }}/fonts/Marcellus-Regular.ttf"); font-weight:400; font-display:block; }
 @font-face{ font-family:"Google Sans Flex"; src:url("{{ static_dir }}/fonts/GoogleSansFlex-Regular.ttf"); font-weight:400; font-display:block; }
 @font-face{ font-family:"Google Sans Flex"; src:url("{{ static_dir }}/fonts/GoogleSansFlex-Medium.ttf"); font-weight:500; font-display:block; }
@@ -50,8 +49,8 @@ body{font-family:var(--sans);-webkit-font-smoothing:antialiased;}
              linear-gradient(105deg, rgba(6,52,44,.34) 0%, rgba(6,52,44,0) 46%); }
 .hero__title{ position:absolute; left:64px; right:60px; bottom:64px; z-index:2; color:#fff; }
 .hero__title .k{ font-family:var(--sans); font-weight:600; font-size:15px; letter-spacing:.32em; text-transform:uppercase; color:rgba(255,255,255,.9); margin-bottom:20px; }
-.hero__title .nm{ font-family:var(--serif-display); font-weight:400; font-size:84px; line-height:.98; letter-spacing:.03em; text-transform:uppercase; text-shadow:0 3px 18px rgba(6,28,22,.45); margin:0; }
-.hero__title .nm .by{ display:block; font-family:var(--serif-alt); font-style:italic; font-size:30px; text-transform:none; letter-spacing:.02em; color:var(--gold); margin-top:14px; }
+.hero__title .nm{ font-family:var(--serif-display); font-weight:700; font-size:84px; line-height:.98; letter-spacing:.03em; text-transform:uppercase; text-shadow:0 3px 18px rgba(6,28,22,.45); margin:0; }
+.hero__title .nm .by{ display:block; font-family:var(--serif-alt); font-weight:400; font-style:italic; font-size:30px; text-transform:none; letter-spacing:.02em; color:var(--gold); margin-top:14px; }
 
 /* ---- azulejo tile band ---- */
 .tiles{ height:26px; flex:none; line-height:0; }
@@ -64,7 +63,7 @@ body{font-family:var(--sans);-webkit-font-smoothing:antialiased;}
 /* investment head */
 .ihead{ margin-bottom:34px; }
 .ihead .e{ display:block; margin-bottom:14px; }
-.ihead .h{ font-family:var(--serif-display); font-weight:400; font-size:54px; letter-spacing:.01em; color:var(--pine); line-height:1; }
+.ihead .h{ font-family:var(--serif-display); font-weight:700; font-size:54px; letter-spacing:.01em; color:var(--pine); line-height:1; }
 
 /* investment numbers grid */
 .nums{ display:grid; grid-template-columns:1fr 1fr; column-gap:64px; }
@@ -82,7 +81,7 @@ body{font-family:var(--sans);-webkit-font-smoothing:antialiased;}
 .kfcell{ border-right:1px solid var(--hairline); border-bottom:1px solid var(--hairline);
   padding:52px 48px; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; }
 .kfcell .lbl{ font-family:var(--sans); font-weight:600; font-size:14px; letter-spacing:.28em; text-transform:uppercase; color:var(--slate-soft); margin-bottom:22px; }
-.kfcell .big{ font-family:var(--serif-display); font-weight:400; font-size:62px; line-height:1.02; letter-spacing:.01em; color:var(--pine); }
+.kfcell .big{ font-family:var(--sans); font-weight:700; font-size:62px; line-height:1.02; letter-spacing:.01em; color:var(--pine); }
 .kfcell .big .u{ font-family:var(--sans); font-weight:600; font-size:26px; color:var(--slate); margin-right:8px; vertical-align:middle; }
 .kfcell .sub{ font-family:var(--sans); font-weight:500; font-size:18px; color:var(--slate); margin-top:20px; line-height:1.35; }
 
