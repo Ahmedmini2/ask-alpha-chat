@@ -75,6 +75,10 @@ def _gemini_error_message(e: gemini_images.GeminiImageError) -> str:
     if e.kind == "blocked":
         return ("That image couldn't be generated from this photo and template (it was blocked by "
                 "a safety filter). Try a different template, or a clearer head-and-shoulders photo.")
+    if e.kind == "overloaded":
+        return ("Google's image service is busy right now — I tried the backup model too, but both "
+                "came back overloaded. This is on Google's side and usually clears within a few "
+                "minutes, so please try again shortly.")
     return "Image generation failed this time — please try again in a moment."
 
 

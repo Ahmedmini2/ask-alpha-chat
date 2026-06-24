@@ -32,7 +32,11 @@ class Settings(BaseSettings):
     # IMPORTANT: the Gemini *image* models have NO free tier — the Google project behind the
     # key must have BILLING ENABLED, or calls fail 429 RESOURCE_EXHAUSTED (free-tier limit: 0).
     google_ai_studio_api_key: str = ""
-    gemini_image_model_id: str = "gemini-3-pro-image-preview"   # Nano Banana Pro
+    gemini_image_model_id: str = "gemini-3-pro-image-preview"   # Nano Banana Pro (primary)
+    # Fallback when the primary is overloaded/unavailable (the pro *preview* often returns
+    # 503 'high demand' under load). Defaults to standard Nano Banana (GA, far more available).
+    # Set to "" to disable the fallback. Override via GEMINI_IMAGE_FALLBACK_MODEL_ID.
+    gemini_image_fallback_model_id: str = "gemini-2.5-flash-image"
     gemini_image_size: str = "2K"                               # "1K" | "2K" | "4K" (uppercase K)
     gemini_image_timeout_sec: int = 120
     branding_images_enabled: bool = True
