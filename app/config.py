@@ -34,9 +34,9 @@ class Settings(BaseSettings):
     google_ai_studio_api_key: str = ""
     gemini_image_model_id: str = "gemini-3-pro-image-preview"   # Nano Banana Pro (primary)
     # Fallback when the primary is overloaded/unavailable (the pro *preview* often returns
-    # 503 'high demand' under load). Defaults to standard Nano Banana (GA, far more available).
+    # 503 'high demand' under load). The flash image model is more available under load.
     # Set to "" to disable the fallback. Override via GEMINI_IMAGE_FALLBACK_MODEL_ID.
-    gemini_image_fallback_model_id: str = "gemini-2.5-flash-image"
+    gemini_image_fallback_model_id: str = "gemini-3.1-flash-image"
     gemini_image_size: str = "2K"                               # "1K" | "2K" | "4K" (uppercase K)
     gemini_image_timeout_sec: int = 120
     branding_images_enabled: bool = True
